@@ -1,0 +1,25 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+@layer base {
+    body {
+        @apply bg-white text-zinc-900;
+    }
+}
+
+@layer components {
+    .v-row {
+        @apply flex flex-row gap-2;
+    }
+    .v-col {
+        @apply flex flex-col gap-2;
+    }
+
+    .popover {
+        @apply bg-white;
+    }
+}
+
+.slideover-button {
+    @apply flex flex-col gap-2 p-4 bg-zinc-200 text-zinc-900 cursor-pointer hover:bg-zinc-800 hover:text-zinc-50 active:bg-zinc-700 duration-150;
+}

@@ -1,0 +1,32 @@
+export interface TransportAccountingUpdate {
+    additionalExpenses: number | 0;
+    addressOfDelivery: string | '';
+    cargo: string | '';
+    client: string | '';
+    clientLead: string | '';
+    contractor: string | '';
+    contractorRate: string | '';
+    dateOfBill: string | '';
+    dateOfPaymentContractor: string | '';
+    dateOfPickup: string | '';
+    dateOfSubmission: string | '';
+    datePayment: string | '';
+    departmentHead: string | '';
+    driver: string | '';
+    formPayAs: string | '';
+    formPayHim: string | '';
+    id: number;
+    income: number | 0;
+    incomeLearned: number | 0;
+    manager: string | '';
+    numberOfBill: string | '';
+    numberOfBillAdd: string | '';
+    numberOfContainer: string | '';
+    ourFirm: string | '';
+    salesManager: string | '';
+    sumIssued: string | '';
+    summa: string | '';
+    taxes: number | 0;
+    typeOfContainer: string | '';
+    managerBlock?: boolean;
+}
