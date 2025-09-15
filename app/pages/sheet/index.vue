@@ -21,6 +21,9 @@ import { useEmployeeStore } from '~/stores/employee-store';
 import { useSheetStore } from '~/stores/sheet-store';
 
 definePageMeta({ ssr: false });
+useHead({
+  title: 'СЛТ Транспортный учет'
+})
 
 const showFallback = ref(true);
 

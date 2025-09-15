@@ -7,6 +7,7 @@ import { HEADERS } from '~/pages/sheet/attributes/headers';
 import { styles } from '~/pages/sheet/attributes/styles';
 import { lockHeaders } from '~/helpers/univer-protect';
 import { registerUniverEvents } from '~/helpers/univer-events';
+import { useSheetStore } from '~/stores/sheet-store';
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') {
@@ -14,7 +15,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   }
 
   const headers = import.meta.server ? useRequestHeaders(["cookie"]) : undefined;
-  const me: any = $fetch("/api/auth/me", { headers })
+  const me: any = await $fetch("/api/auth/me", { headers }).catch(() => null)
 
   const [{ createUniver, LocaleType, mergeLocales }, { UniverSheetsCorePreset }, SheetsCoreRuRU, SheetsCoreEnUS, { UniverSheetsDataValidationPreset }, SheetsDVEnUS, SheetsDVRuRU] = await Promise.all([
     import('@univerjs/presets'),
@@ -119,6 +120,18 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
 
   // Register sheet events
   registerUniverEvents(univerAPI);
+
+  // Subscribe to socket and pipe messages into the store
+  try {
+    const store = useSheetStore()
+    store.$subscribe((mutation, state) => {
+      const wb = univerAPI.getActiveWorkbook()
+
+      Object.entries(state.records).forEach(([periodName, items]))
+    })
+  } catch (e) {
+    console.error('[socket] subscribe failed:', e)
+  }
 
   await addDataValidation(univerAPI);
   await lockHeaders(univerAPI);

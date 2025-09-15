@@ -8,7 +8,7 @@ export default defineNuxtPlugin(async (nuxtApp) => {
   const token  = me?.token
 
   // финальный raw WS URL
-  const url = `wss:/kings-logix.ru/socket/tables/${table}/${userId}?token=${encodeURIComponent(token)}`;
+  const url = `wss://kings-logix.ru/socket/tables/${table}/${userId}?token=${encodeURIComponent(token)}`;
 
   // отладка
 //   console.log('[raw-ws] url:', url);
@@ -43,12 +43,6 @@ export default defineNuxtPlugin(async (nuxtApp) => {
         console.log('[socket] получено сообщение', ev.data)
         try {
           const payload = JSON.parse(ev.data);
-          // console.log('[socket] разобранное сообщение', {
-          //   type: payload.type, 
-          //   userId: payload.userId,
-          //   data: payload.TransportAccountingDto || payload.listToDel
-          // })
-          
           listeners.forEach(fn => fn(payload))
         } catch (error) {
           console.error('[socket] ошибка парсинга', error)
