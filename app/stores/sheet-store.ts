@@ -79,7 +79,7 @@ export const useSheetStore = defineStore('sheet', {
         applySocketMessage(msg: SocketEvent, listName: string) {
             this.socketHandlers.forEach(handler => handler(msg))
 
-            const dto = (msg as any).transportAccountingDto?.[0]
+            const dto = (msg as any).transportAccountingDto?.[0] ?? (msg as any).transportAccountingDTO?.[0]
 
             // normalize payload shape
             const byList: Record<string, TransportAccounting[]> =
@@ -91,11 +91,11 @@ export const useSheetStore = defineStore('sheet', {
                 (msg as any).body?.object ??
                 {};
 
-            let dtoArray = (msg as any).transportAccountingDto ?? (msg as any).transportAccountingDTO;
+            let dtoArray: TransportAccounting[] | undefined = (msg as any).transportAccountingDto ?? (msg as any).transportAccountingDTO;
             if (Array.isArray(dtoArray) && dtoArray.length > 0 && Object.keys(byList).length === 0) {
                 // Если byList пуст, но есть массив записей, группируем их по listName
-                const grouped = dtoArray.reduce((acc, item) => {
-                    const list = item.listName;
+                const grouped = dtoArray.reduce((acc, item: any) => {
+                    const list = item?.listName;
                     if (list) {
                         if (!acc[list]) acc[list] = [];
                         acc[list].push(item);
@@ -121,8 +121,10 @@ export const useSheetStore = defineStore('sheet', {
               return
             }
 
-            if (msg.type === 'status_create' && (((msg as any).transportAccountingDto?.length ?? 0) > 0 || (byList[targetList]?.length ?? 0) > 0)) {
-                const created = byList[targetList] ?? ((msg as any).transportAccountingDto as TransportAccounting[]);
+            if (msg.type === 'status_create') {
+                // Предпочтительно использовать карту по спискам, иначе fallback к массиву
+                const created = (byList[targetList] && byList[targetList].length ? byList[targetList] : undefined)
+                    ?? (Array.isArray(dtoArray) ? dtoArray : undefined);
                 if (!created || !created.length) { console.log('[socket] create: empty payload, skip'); return }
                 const first = created[0]
                 const existsIndex = this.records[targetList]?.findIndex(r => r.id === first?.id) ?? -1
@@ -132,8 +134,11 @@ export const useSheetStore = defineStore('sheet', {
                 return
             } 
 
-            if (msg.type === 'status_update' && ((msg as any).transportAccountingDto?.length ?? 0) > 0) {
-                const dto = (msg as any).transportAccountingDto[0]
+            if (msg.type === 'status_update') {
+                const list = (byList[targetList] && byList[targetList].length ? byList[targetList] : undefined)
+                    ?? (Array.isArray(dtoArray) ? dtoArray : undefined);
+                const dto = Array.isArray(list) ? list[0] : ((msg as any).transportAccountingDto?.[0] ?? (msg as any).transportAccountingDTO?.[0]);
+                if (!dto) { console.log('[socket] update: empty dto, skip'); return }
 
                 // if target list wasn't found, try find by current records map
                 let tl = targetList

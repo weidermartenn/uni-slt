@@ -1,5 +1,7 @@
 import type { FUniver } from '@univerjs/presets';
 import type { TransportAccounting } from '~/entities/TransportAccountingDto/types';
+import { watch } from 'vue';
+import { useNuxtApp } from '#app';
 import { autoFitColumnAndRowData } from '~/helpers/autoFit';
 import { buildRowCells } from '~/helpers/build-rows';
 import { addDataValidation } from '~/helpers/validation';
@@ -118,19 +120,80 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     resources: []
   });
 
-  // Register sheet events
+  // Register sheet events (1: user edits → 2: send add/update)
   registerUniverEvents(univerAPI);
 
-  // Subscribe to socket and pipe messages into the store
+  // 3: receive data from socket → 4: apply on clients via watch() on store.records
   try {
-    const store = useSheetStore()
-    store.$subscribe((mutation, state) => {
-      const wb = univerAPI.getActiveWorkbook()
+    const store = useSheetStore();
+    const { $wsOnMessage } = useNuxtApp();
 
-      Object.entries(state.records).forEach(([periodName, items]))
-    })
+    // Wire raw socket → store (normalize is inside store.applySocketMessage)
+    if (typeof $wsOnMessage === 'function') {
+      $wsOnMessage((payload: any) => {
+        // Try to infer listName hint from active sheet (fallback)
+        const wb = univerAPI.getActiveWorkbook();
+        const activeName = wb?.getActiveSheet()?.getSheet()?.getName() || '';
+        store.applySocketMessage?.(payload as any, activeName);
+      });
+    }
+
+    // Column mapping for Univer: index -> value from TransportAccounting
+    const mapValueByCol = (item: TransportAccounting, col: number): any => {
+      switch (col) {
+        case 0: return item.dateOfPickup;
+        case 1: return item.numberOfContainer;
+        case 2: return item.cargo;
+        case 3: return item.typeOfContainer;
+        case 4: return item.dateOfSubmission;
+        case 5: return item.addressOfDelivery;
+        case 6: return item.ourFirm;
+        case 7: return item.client;
+        case 8: return item.formPayAs;
+        case 9: return item.summa;
+        case 10: return item.numberOfBill;
+        case 11: return item.dateOfBill;
+        case 12: return item.datePayment;
+        case 13: return item.contractor;
+        case 14: return item.driver;
+        case 15: return item.formPayHim;
+        case 16: return item.contractorRate;
+        case 17: return item.sumIssued;
+        case 18: return item.numberOfBillAdd;
+        case 19: return item.dateOfPaymentContractor;
+        case 20: return item.manager;
+        case 21: return item.departmentHead;
+        case 22: return item.clientLead;
+        case 23: return item.salesManager;
+        case 24: return item.additionalExpenses;
+        case 25: return item.income;
+        case 26: return item.incomeLearned;
+        case 27: return item.id;
+        default: return '';
+      }
+    };
+
+    // Watch per period to update only affected sheet/rows
+    watch(() => store.records, (records) => {
+      const wb = univerAPI.getActiveWorkbook();
+      if (!wb) return;
+
+      Object.entries(records || {}).forEach(([periodName, items]) => {
+        const sheet = wb.getSheetByName(periodName);
+        if (!sheet) return;
+
+        items.forEach((item: TransportAccounting, index: number) => {
+          const row = index + 1; // +1 because 0 is header
+          // Update only the row's values to avoid heavy full-sheet writes
+          for (let col = 0; col < 28; col++) {
+            const v = mapValueByCol(item, col);
+            sheet.getRange(row, col).setValue({ v });
+          }
+        });
+      });
+    }, { deep: true });
   } catch (e) {
-    console.error('[socket] subscribe failed:', e)
+    console.error('[socket/watch] wiring failed:', e);
   }
 
   await addDataValidation(univerAPI);

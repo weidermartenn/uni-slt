@@ -118,71 +118,15 @@ export function registerUniverEvents(univerAPI: FUniver) {
       if (!idCellStr) {
         if (requestedRows.has(key)) { console.log('[univer-events] Skip: request already in-flight for key', key); return; }
 
-        // 2. set temporary id
-        const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        console.log('[univer-events] CREATE: set temp id', { key, tempId });
-        aws.getRange(row, 27).setValue({ v: String(tempId) });
-
-        // 3. send add request
+        // 2. send add request (no local UI mutation here; wait for socket + watch)
         const dto = buildSR();
         console.log('[univer-events] CREATE: sending addRecords', { listName, key, dto });
         requestedRows.add(key);
         try {
-          const res: any = await sheetStore.addRecords([dto]);
-          console.log('[univer-events] CREATE: server response', res);
-
-          const created = res?.object?.[0] ?? (res as any)?.transportAccountingDto?.[0] ?? (res as any)?.body?.object?.[0] ?? (res as any)?.body?.transportAccountingDto?.[0];
-          if (!created) {
-            console.warn('[univer-events] CREATE: no created entity in response');
-          } else {
-            const realId = created?.id;
-            console.log('[univer-events] CREATE: resolved real id', { realId });
-            // Build row values from server entity
-            const rowValues: any[] = [
-              created?.dateOfPickup ?? '',
-              created?.numberOfContainer ?? '',
-              created?.cargo ?? '',
-              created?.typeOfContainer ?? '',
-              created?.dateOfSubmission ?? '',
-              created?.addressOfDelivery ?? '',
-              created?.ourFirm ?? '',
-              created?.client ?? '',
-              created?.formPayAs ?? '',
-              created?.summa ?? '',
-              created?.numberOfBill ?? '',
-              created?.dateOfBill ?? '',
-              created?.datePayment ?? '',
-              created?.contractor ?? '',
-              created?.driver ?? '',
-              created?.formPayHim ?? '',
-              created?.contractorRate ?? '',
-              created?.sumIssued ?? '',
-              created?.numberOfBillAdd ?? '',
-              created?.dateOfPaymentContractor ?? '',
-              created?.manager ?? '',
-              created?.departmentHead ?? '',
-              created?.clientLead ?? '',
-              created?.salesManager ?? '',
-              created?.additionalExpenses ?? '',
-              created?.income ?? '',
-              created?.incomeLearned ?? '',
-              created?.id ?? ''
-            ];
-            try {
-              const range = aws.getRange(row, 0, 1, 28);
-              // Set as objects { v } to be explicit
-              const matrix = [rowValues.map(v => ({ v }))];
-              range.setValues(matrix);
-              console.log('[univer-events] CREATE: row values set from server entity', { key, row });
-            } catch (e2) {
-              console.error('[univer-events] CREATE: failed to set full row values, fallback to ID only', e2);
-              if (realId) aws.getRange(row, 27).setValue({ v: String(realId) });
-            }
-          }
+          await sheetStore.addRecords([dto]);
+          console.log('[univer-events] CREATE: request sent, awaiting socket update');
         } catch (e) {
-          // rollback temp id on failure
-          aws.getRange(row, 27).setValue({ v: '' });
-          console.error('[univer-events] CREATE failed, rollback temp id:', { key, error: e });
+          console.error('[univer-events] CREATE failed:', { key, error: e });
         } finally {
           requestedRows.delete(key);
           console.log('[univer-events] CREATE: cleanup request flag', { key });
