@@ -72,6 +72,20 @@ export const useSheetStore = defineStore('sheet', {
                 method: 'DELETE',
                 body: listToDelete
             })
+        },
+
+        applySocketMessage(msg: SocketEvent, listName: string) {
+            this.socketHandlers.forEach(handler => handler(msg))
+
+            const dto = msg.transportAccountingDto?.[0]
+            if (msg.type === 'status_create' && msg.transportAccountingDto?.length) {
+                const index = this.records[listName]?.findIndex(r => r.id === dto?.id)
+                if (index) return
+                // @ts-ignore
+                const obj = msg.transportAccountingDto?.object ?? msg.transportAccountingDto?.body?.object ?? {};
+                this.records[listName] = this.records[listName]!.concat(obj[listName])
+                console.log(`[socket] добавлена запись, id = `, dto?.id)
+            }
         }
     }
 }) 

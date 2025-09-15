@@ -4,11 +4,11 @@ export async function buildRowCells(rec: TransportAccounting, me: any) {
   const cell = (v: any, col: number) =>
     ({
       v: v ?? "",
-      s: [26, 27].includes(col)
+      s: [25, 26].includes(col)
         ? "lockedCol"
         : rec?.managerBlock && me?.roleCode !== "ROLE_ADMIN" && me?.roleCode !== "ROLE_BUH"
         ? "lockedRow"
-        : "allrows",
+        : "ar",
     } as { v: any; s: string });
 
   const row: Record<number, { v: any; s: string }> = {};
@@ -39,6 +39,6 @@ export async function buildRowCells(rec: TransportAccounting, me: any) {
   row[24] = cell(rec?.additionalExpenses, 24);
   row[25] = cell(rec?.income, 25);
   row[26] = cell(rec?.incomeLearned, 26);
-  row[27] = { v: rec?.id ?? "", s: "idcol" };
+  row[27] = { v: rec?.id ?? "", s: "id" };
   return row;
 }

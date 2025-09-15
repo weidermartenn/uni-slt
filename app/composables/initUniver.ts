@@ -5,6 +5,8 @@ import { buildRowCells } from '~/helpers/build-rows';
 import { addDataValidation } from '~/helpers/validation';
 import { HEADERS } from '~/pages/sheet/attributes/headers';
 import { styles } from '~/pages/sheet/attributes/styles';
+import { lockHeaders } from '~/helpers/univer-protect';
+import { registerUniverEvents } from '~/helpers/univer-events';
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') {
@@ -42,6 +44,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       UniverSheetsCorePreset({
         container: 'univer',
         ribbonType: 'simple',
+        footer: {
+          menus: false,
+        }
       }),
       UniverSheetsDataValidationPreset(),
     ],
@@ -72,7 +77,10 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     const totalRows = data.length + rowsToAdd 
     for (let r = data.length + 1; r < totalRows; r++) {
       const empty: Record<number, { v: any, s?: string }> = {}
-      for (let c = 0; c < 28; c++) empty[c] = { v: '', s: 'allrows' }
+      for (let c = 0; c < 28; c++) {
+        // Z (25) and AA (26) are locked, AB (27) has id style
+        empty[c] = { v: '', s: c === 27 ? 'id' : ([25, 26].includes(c) ? 'lockedCol' : 'ar') }
+      } 
       cellData[r] = empty
     }
 
@@ -88,12 +96,11 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   }
 
   const parsePeriod = (name: string): number => {
-    // expects "MM.YYYY"
     const m = /^([01]?\d)\.(\d{4})$/.exec(String(name).trim());
     if (!m) return Number.MAX_SAFE_INTEGER;
     const mm = Number(m[1]);
     const yyyy = Number(m[2]);
-    return yyyy * 100 + mm; // sortable numeric key
+    return yyyy * 100 + mm;
   };
   const order = Object.keys(sheets).sort((a, b) => {
     const na = sheets[a]?.name ?? "";
@@ -110,7 +117,11 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     resources: []
   });
 
+  // Register sheet events
+  registerUniverEvents(univerAPI);
+
   await addDataValidation(univerAPI);
+  await lockHeaders(univerAPI);
 
   return univerAPI;
 }

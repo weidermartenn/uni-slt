@@ -9,9 +9,9 @@ export function autoFitColumnAndRowData(
         maxCol = 260,
         pxPerChar = 9.5,
         paddingX = 24,
-        minRow = 28,
-        maxRow = 160,
-        lineHeight = 22,
+        minRow = 25,
+        maxRow = 25,
+        lineHeight = 25,
         headerRowHeight = 56
     } = {}
 ): { columnData: ColumnData; rowData: RowData } {
@@ -28,7 +28,8 @@ export function autoFitColumnAndRowData(
             if (s.length > maxLen) maxLen = s.length
         }
         const width = Math.min(maxCol, Math.max(minCol, Math.ceil(maxLen * pxPerChar) + paddingX))
-        columnData[c] = { w: width, hd: 0 }
+        const finalWidth = (c === 6) ? 200 : width // G column (index 6) fixed width
+        columnData[c] = { w: finalWidth, hd: 0 }
     }
 
     // calc helper for row height by content
