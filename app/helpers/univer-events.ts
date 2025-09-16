@@ -8,6 +8,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   // Track rows where we already sent "add" to backend to avoid duplicates before socket response
   const requestedRows = new Set<string>();
+  let batchPasteInProgress = false;
 
   // Extract raw cell value -> string (deeply unwraps { v: ... } and rich-text)
   const unwrapV = (x: any): any => (x && typeof x === 'object' && 'v' in x) ? unwrapV((x as any).v) : x;
@@ -44,12 +45,28 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return null;
   };
 
+  // Highlight a full data row temporarily using theme
+  const highlightRow = (aws: any, row: number) => {
+    try {
+      const range = aws.getRange(row, 0, 1, 28);
+      range.useThemeStyle('light-green');
+      const currentTheme = range.getUsedThemeStyle();
+      setTimeout(() => {
+        try { range.removeThemeStyle(currentTheme); } catch {}
+      }, 1000);
+    } catch (e) {
+      console.warn('[univer-events] highlightRow failed', e);
+    }
+  };
+
   const offEditEnded = univerAPI.addEvent(univerAPI.Event.SheetEditEnded, async (params: any) => {
+    if (batchPasteInProgress) { return; }
     const col = params.column;
     const row = params.row;
 
     const wb = univerAPI.getActiveWorkbook();
     if (!wb) return;
+
     const aws = wb.getActiveSheet();
     const s = aws.getSheet();
     if (!s) return;
@@ -80,6 +97,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
         range.setValue({ v: normalizedDate });
       }
     }
+
+    // highlight edited row briefly on all clients
+    highlightRow(aws, row);
 
     // 2) Create or update logic based on ID cell
     try {
@@ -172,8 +192,238 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
   });
 
+  // Clipboard paste handling (multi-row)
+  const offBeforePaste = univerAPI.addEvent(univerAPI.Event.BeforeClipboardPaste, async (params: any) => {
+
+    const { text, html } = params;
+    console.log('data to paste', text)
+
+    const wb = univerAPI.getActiveWorkbook();
+    const aws = wb?.getActiveSheet();
+    const startCol = aws?.getSelection()?.getActiveRange?.()?._range?.startColumn ?? 0;
+
+    const isNumericCol = (absColIndex: number) => new Set([9, 16, 17, 24, 25, 26]).has(absColIndex);
+
+    const normalizeCellIfDateCol = (val: any, absColIndex: number) => {
+      if (!dateCols.has(absColIndex)) return val;
+      const normalized = normalizeDateInput(val);
+      return normalized;
+    };
+
+    const normalizeNumberStr = (raw: any): string => {
+      const s = (raw ?? '').toString();
+      if (!s) return '';
+      return s.replace(/\s+/g, '').replace(',', '.');
+    };
+
+    let changed = false;
+
+    // 0) Plain text (tab-separated) normalization for date and numeric cols
+    if (typeof (params as any)?.text === 'string') {
+      const rows = ((params as any).text as string).split(/\r?\n/);
+      const normRows = rows.map((line: string) => {
+        if (!line) return line;
+        const cols = line.split('\t');
+        return cols
+          .map((cell, cIdx) => {
+            const absCol = startCol + cIdx;
+            if (dateCols.has(absCol)) {
+              return normalizeDateInput(cell) ?? cell;
+            }
+            if (isNumericCol(absCol)) {
+              return normalizeNumberStr(cell);
+            }
+            return cell;
+          })
+          .join('\t');
+      });
+      const next = normRows.join('\n');
+      if (next !== (params as any).text) {
+        (params as any).text = next;
+        changed = true;
+      }
+    }
+
+    // Normalize HTML payload (Univer may prefer HTML over text)
+    if (typeof (params as any)?.html === 'string') {
+      const prev = (params as any).html as string;
+      const next = prev.replace(/\b(\d{2})\.(\d{2})\.(\d{4})\b/g, (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`);
+      if (next !== prev) {
+        (params as any).html = next;
+        changed = true;
+      }
+    }
+
+    // Normalize table-shaped payloads aligned to paste anchor column
+    const data = (params as any)?.data ?? (params as any)?.clipboardData;
+    if (data) {
+      if (typeof data.html === 'string') {
+        const prev = data.html as string;
+        const next = prev.replace(/\b(\d{2})\.(\d{2})\.(\d{4})\b/g, (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`);
+        if (next !== prev) { data.html = next; changed = true; }
+      }
+      if (Array.isArray(data.cells)) {
+        data.cells = data.cells.map((row: any) => Array.isArray(row)
+          ? row.map((cell: any, cIdx: number) => {
+              const absCol = startCol + cIdx;
+              if (dateCols.has(absCol)) {
+                const nv = normalizeCellIfDateCol(cell, absCol);
+                if (nv !== cell) changed = true;
+                return nv;
+              }
+              if (isNumericCol(absCol)) {
+                const nv = normalizeNumberStr(cell);
+                if (nv !== cell) changed = true;
+                return nv;
+              }
+              return cell;
+            })
+          : row);
+      }
+    }
+
+    if (Array.isArray((params as any)?.cells)) {
+      (params as any).cells = (params as any).cells.map((row: any) => Array.isArray(row)
+        ? row.map((cell: any, cIdx: number) => {
+            const absCol = startCol + cIdx;
+            if (dateCols.has(absCol)) {
+              const nv = normalizeCellIfDateCol(cell, absCol);
+              if (nv !== cell) changed = true;
+              return nv;
+            }
+            if (isNumericCol(absCol)) {
+              const nv = normalizeNumberStr(cell);
+              if (nv !== cell) changed = true;
+              return nv;
+            }
+            return cell;
+          })
+        : row);
+    }
+
+    if (changed) {
+      console.log('[univer-events] BeforeClipboardPaste: normalized dates and numeric fields');
+    }
+    // Allow default paste to proceed
+  });
+  
+  const offPasted = univerAPI.addEvent(univerAPI.Event.ClipboardPasted, async (params: any) => {
+    const wb = univerAPI.getActiveWorkbook();
+    const aws = wb?.getActiveSheet();
+    const s = aws?.getSheet();
+    if (!wb || !aws || !s) return;
+
+    try {
+      batchPasteInProgress = true;
+
+      // Determine pasted rectangle from selection (active range after paste)
+      const ar = aws.getSelection()?.getActiveRange?.();
+      const startRow = (ar?._range?.startRow ?? 0);
+      const endRow = (ar?._range?.endRow ?? startRow);
+      const startCol = (ar?._range?.startColumn ?? 0);
+      const endCol = (ar?._range?.endColumn ?? startCol);
+
+      const listName = s.getName();
+      const sheetStore = useSheetStore();
+
+      // 1) Post-normalize pasted cells in-place (UI + source for DTOs)
+      const isNumericCol = (absColIndex: number) => new Set([9, 16, 17, 24, 25, 26]).has(absColIndex);
+      const normalizeNumberStr = (raw: any): string => {
+        const x = (raw ?? '').toString();
+        if (!x) return '';
+        return x.replace(/\s+/g, '').replace(',', '.');
+      };
+
+      for (let r = Math.max(1, startRow); r <= endRow; r++) { // skip header row (0)
+        for (let c = startCol; c <= endCol; c++) {
+          if (dateCols.has(c)) {
+            const raw = s.getCell(r, c);
+            const nv = normalizeDateInput(raw);
+            if (nv && nv !== toStr(raw)) {
+              aws.getRange(r, c).setValue({ v: nv });
+            }
+          } else if (isNumericCol(c)) {
+            const raw = toStr(s.getCell(r, c));
+            const nv = normalizeNumberStr(raw);
+            if (nv !== raw) {
+              aws.getRange(r, c).setValue({ v: nv });
+            }
+          }
+        }
+      }
+
+      // 2) Collect rows without ID (new records) that contain data
+      const dtos: any[] = [];
+      for (let r = Math.max(1, startRow); r <= endRow; r++) { // skip header row (0)
+        const idStr = toStr(s.getCell(r, 27));
+        if (idStr) continue; // existing record -> let normal update path handle next edits
+
+        // check any data in visible columns (0..26)
+        let hasData = false;
+        for (let c = 0; c <= 26; c++) { if (toStr(s.getCell(r, c))) { hasData = true; break; } }
+        if (!hasData) continue;
+
+        const V = (c: number) => toStr(s.getCell(r, c));
+        const dto = {
+          additionalExpenses: V(24),
+          addressOfDelivery: V(5),
+          cargo: V(2),
+          client: V(7),
+          clientLead: V(22),
+          contractor: V(13),
+          contractorRate: V(16),
+          dateOfBill: V(11),
+          dateOfPaymentContractor: V(19),
+          dateOfPickup: V(0),
+          dateOfSubmission: V(4),
+          datePayment: V(12),
+          departmentHead: V(21),
+          driver: V(14),
+          formPayAs: V(8),
+          formPayHim: V(15),
+          id: 0,
+          listName,
+          income: V(25),
+          incomeLearned: V(26),
+          manager: V(20),
+          numberOfBill: V(10),
+          numberOfBillAdd: V(18),
+          numberOfContainer: V(1),
+          ourFirm: V(6),
+          salesManager: V(23),
+          sumIssued: V(17),
+          summa: V(9),
+          taxes: '',
+          typeOfContainer: V(3),
+        };
+        dtos.push(dto);
+      }
+
+      if (dtos.length) {
+        console.log('[univer-events] PASTE: addRecords batch', { count: dtos.length });
+        console.log('[univer-events] PASTE: dtos', dtos);
+        // TODO: uncomment when ready to commit changes')
+        await sheetStore.addRecords(dtos);
+        // highlight all affected rows briefly
+        for (let r = Math.max(1, startRow); r <= endRow; r++) {
+          const idStr = toStr(s.getCell(r, 27));
+          // подсветим только строки с данными
+          let hasData = false;
+          for (let c = 0; c <= 26; c++) { if (toStr(s.getCell(r, c))) { hasData = true; break; } }
+          if (hasData) highlightRow(aws, r);
+        }
+      }
+    } catch (e) {
+      console.error('[univer-events] paste handler failed', e);
+    } finally {
+      batchPasteInProgress = false;
+    }
+  });
+
   // Return disposer to allow cleanup by caller if needed
   return () => {
     try { (offEditEnded as any)?.dispose?.(); } catch {}
+    try { (offBeforePaste as any)?.dispose?.(); } catch {}
+    try { (offPasted as any)?.dispose?.(); } catch {}
   };
 }

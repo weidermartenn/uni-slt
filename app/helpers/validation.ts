@@ -12,6 +12,8 @@ export async function addDataValidation(api: FUniver) {
     await validationStore.fetchCompaniesNames()
     await employeeStore.fetchEmployees()
 
+    const options = ['С НДС', 'БЕЗ НДС']
+
     const firmR = ws?.getRange('G2:G1000');
     const firmRule = api.newDataValidation() 
         .requireValueInList(validationStore.companies)
@@ -46,6 +48,23 @@ export async function addDataValidation(api: FUniver) {
     applyDateValidation('L2:L1000')
     applyDateValidation('T2:T1000')
 
+    const applyOptionValidation = (a1: string) => {
+      const range = ws?.getRange(a1)
+      if (!range) return 
+      const rule = api.newDataValidation() 
+        .requireValueInList(options)
+        .setOptions({
+          showErrorMessage: true,
+          error: 'Выберите один из вариантов',
+        })
+        .build();
+      range.setDataValidation(rule);
+      range.setHorizontalAlignment('left')
+    }
+
+    applyOptionValidation('I2:I1000')
+    applyOptionValidation('P2:P1000')
+
     const managerR = ws?.getRange('U2:X1000');
 
     const employeeOptions = (employeeStore.employees as (string | null | undefined)[])
@@ -68,4 +87,6 @@ export async function addDataValidation(api: FUniver) {
         .build();
 
     managerR?.setDataValidation(managerRule);
+
+
 }
