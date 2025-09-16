@@ -9,8 +9,26 @@ export function registerUniverEvents(univerAPI: FUniver) {
   // Track rows where we already sent "add" to backend to avoid duplicates before socket response
   const requestedRows = new Set<string>();
 
-  // Extract raw cell value -> string
-  const toStr = (raw: any): string => String((raw && typeof raw === 'object' && 'v' in raw) ? (raw as any).v : (raw ?? '')).trim();
+  // Extract raw cell value -> string (deeply unwraps { v: ... } and rich-text)
+  const unwrapV = (x: any): any => (x && typeof x === 'object' && 'v' in x) ? unwrapV((x as any).v) : x;
+  const toStr = (raw: any): string => {
+    const val = unwrapV(raw);
+    if (val == null) return '';
+    if (typeof val === 'object') {
+      // Rich-text cases: { t: string } or { p: segments }
+      if (typeof (val as any).t === 'string') return (val as any).t.trim();
+      const p = (val as any).p;
+      if (Array.isArray(p)) {
+        return p.map((seg: any) => {
+          const s = seg?.s;
+          if (s && typeof s === 'object' && 'v' in s) return String(unwrapV(s.v));
+          return String(unwrapV(s));
+        }).join('').trim();
+      }
+      return '';
+    }
+    return String(val).trim();
+  };
 
   // Extract date from mixed strings and normalize to YYYY-MM-DD
   const normalizeDateInput = (raw: any): string | null => {

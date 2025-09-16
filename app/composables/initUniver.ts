@@ -173,6 +173,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       }
     };
 
+    // Track previous rendered count per sheet to clear stale rows on delete
+    const lastCounts = new Map<string, number>();
+
     // Watch per period to update only affected sheet/rows
     watch(() => store.records, (records) => {
       const wb = univerAPI.getActiveWorkbook();
@@ -182,14 +185,27 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         const sheet = wb.getSheetByName(periodName);
         if (!sheet) return;
 
+        // Render/refresh rows for actual items
         items.forEach((item: TransportAccounting, index: number) => {
           const row = index + 1; // +1 because 0 is header
-          // Update only the row's values to avoid heavy full-sheet writes
           for (let col = 0; col < 28; col++) {
             const v = mapValueByCol(item, col);
             sheet.getRange(row, col).setValue({ v });
           }
         });
+
+        // Clear stale rows if list shrank (e.g., after delete)
+        const prev = lastCounts.get(periodName) ?? 0;
+        const curr = Array.isArray(items) ? items.length : 0;
+        if (prev > curr) {
+          // очищаем только значения, без влияния на стили/валидации
+          for (let row = curr + 1; row <= prev; row++) {
+            for (let col = 0; col < 28; col++) {
+              sheet.getRange(row, col).setValue({ v: '' });
+            }
+          }
+        }
+        lastCounts.set(periodName, curr);
       });
     }, { deep: true });
   } catch (e) {

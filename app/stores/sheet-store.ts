@@ -13,6 +13,7 @@ interface SocketEvent {
 export const useSheetStore = defineStore('sheet', {
     state: () => ({
         records: {} as Record<string, TransportAccounting[]>,
+        tempIdMap: new Map(),
         loading: false,
         error: '' as string | null,
         socketHandlers: [] as Array<(event: SocketEvent) => void>,
@@ -70,9 +71,9 @@ export const useSheetStore = defineStore('sheet', {
 
         async deleteRecords(listToDelete: number[]) {
             if (!Array.isArray(listToDelete) || listToDelete.length === 0) return 
-            await $fetch('/api/worktable/record-delete', {
+            await $fetch('/api/worktable/record-remove', {
                 method: 'DELETE',
-                body: listToDelete
+                body: { transportAccountingIds: listToDelete }
             })
         },
 
@@ -156,6 +157,33 @@ export const useSheetStore = defineStore('sheet', {
                     this.records[tl] = (this.records[tl] || []).concat([dto])
                     console.log('[socket] update: record not found locally, appended', { targetList: tl, id: dto?.id })
                 }
+                return
+            }
+
+            if (msg.type === 'status_delete') {
+                // ID может прийти либо в массиве listToDel, либо в dtoArray/null
+                const ids: number[] = []
+                const listToDel = (msg as any).listToDel as number[] | undefined
+                if (Array.isArray(listToDel)) ids.push(...listToDel.filter(n => Number.isFinite(n)))
+                if (Array.isArray(dtoArray)) {
+                    for (const it of dtoArray) {
+                        const id = Number((it as any)?.id)
+                        if (Number.isFinite(id)) ids.push(id)
+                    }
+                }
+                if (!ids.length) { console.log('[socket] delete: no ids, skip'); return }
+
+                let tl = targetList
+                if (!tl) {
+                  // пытаемся определить список по тому, где есть такие id
+                  tl = Object.keys(this.records).find(k => this.records[k]?.some(r => ids.includes(r.id as any))) as string
+                }
+                if (!tl) { console.log('[socket] delete: target list unresolved, skip', { ids }); return }
+
+                const before = this.records[tl]?.length ?? 0
+                this.records[tl] = (this.records[tl] || []).filter(r => !ids.includes(Number(r.id)))
+                const after = this.records[tl]!.length
+                console.log(`[socket] удалено записей`, { targetList: tl, count: before - after, ids })
                 return
             }
         }
