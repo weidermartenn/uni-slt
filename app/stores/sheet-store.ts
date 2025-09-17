@@ -43,7 +43,13 @@ export const useSheetStore = defineStore('sheet', {
 
                 // @ts-ignore
                 const obj = data?.object ?? data?.body?.object ?? {};
-                this.records = { ...obj }
+                // sort each list by id ascending
+                const sorted: Record<string, TransportAccounting[]> = {}
+                for (const [key, value] of Object.entries(obj as Record<string, any[]>)) {
+                    const arr = Array.isArray(value) ? [...value] : []
+                    sorted[key] = arr.sort((a: any, b: any) => Number(a?.id ?? 0) - Number(b?.id ?? 0))
+                }
+                this.records = sorted
             } catch (e) {
                 console.error(e)
             } finally {

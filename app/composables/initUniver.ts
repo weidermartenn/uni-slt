@@ -10,6 +10,7 @@ import { styles } from '~/pages/sheet/attributes/styles';
 import { lockHeaders } from '~/helpers/univer-protect';
 import { registerUniverEvents } from '~/helpers/univer-events';
 import { useSheetStore } from '~/stores/sheet-store';
+import { addFilters } from '~/helpers/filters';
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') {
@@ -19,7 +20,16 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   const headers = import.meta.server ? useRequestHeaders(["cookie"]) : undefined;
   const me: any = await $fetch("/api/auth/me", { headers }).catch(() => null)
 
-  const [{ createUniver, LocaleType, mergeLocales }, { UniverSheetsCorePreset }, SheetsCoreRuRU, SheetsCoreEnUS, { UniverSheetsDataValidationPreset }, SheetsDVEnUS, SheetsDVRuRU] = await Promise.all([
+  const [
+    { createUniver, LocaleType, mergeLocales }, 
+    { UniverSheetsCorePreset }, 
+    SheetsCoreRuRU, SheetsCoreEnUS, 
+    { UniverSheetsDataValidationPreset }, 
+    SheetsDVEnUS, SheetsDVRuRU,
+    { UniverSheetsFilterPreset },
+    UniverPresetSheetsFilterEnUS,
+    UniverPresetSheetsFilterRuRU,
+  ] = await Promise.all([
     import('@univerjs/presets'),
     import('@univerjs/preset-sheets-core'),
     import('@univerjs/preset-sheets-core/locales/ru-RU'),
@@ -27,20 +37,26 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     import('@univerjs/preset-sheets-data-validation'),
     import('@univerjs/preset-sheets-data-validation/locales/en-US'),
     import('@univerjs/preset-sheets-data-validation/locales/ru-RU'),
+    import('@univerjs/preset-sheets-filter'),
+    import('@univerjs/preset-sheets-filter/locales/en-US'),
+    import('@univerjs/preset-sheets-filter/locales/ru-RU')
   ]);
 
   await import('@univerjs/network/facade');
+  await import('@univerjs/preset-sheets-filter/lib/index.css');
 
   const { univerAPI } = createUniver({
     locale: LocaleType.RU_RU,
     locales: {
       [LocaleType.EN_US]: mergeLocales(
         (SheetsCoreEnUS as any).default ?? SheetsCoreEnUS,
-        (SheetsDVEnUS as any).default ?? SheetsDVEnUS
+        (SheetsDVEnUS as any).default ?? SheetsDVEnUS,
+        (UniverPresetSheetsFilterEnUS as any).default ?? UniverPresetSheetsFilterEnUS
       ),
       [LocaleType.RU_RU]: mergeLocales(
         (SheetsCoreRuRU as any).default ?? SheetsCoreRuRU,
-        (SheetsDVRuRU as any).default ?? SheetsDVRuRU
+        (SheetsDVRuRU as any).default ?? SheetsDVRuRU,
+        (UniverPresetSheetsFilterRuRU as any).default ?? UniverPresetSheetsFilterRuRU
       ),
     },
     presets: [
@@ -49,9 +65,11 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         ribbonType: 'simple',
         footer: {
           menus: false,
-        }
+        },
+        contextMenu: false,
       }),
       UniverSheetsDataValidationPreset(),
+      UniverSheetsFilterPreset()
     ],
   });
 
@@ -119,6 +137,29 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     sheets,
     resources: []
   });
+
+  // Expose API globally for theme and other controls
+  try {
+    const { setUniverApi } = await import('~/composables/useUniverApi')
+    setUniverApi(univerAPI)
+
+    // Apply initial header style depending on theme
+    try {
+      const { useTheme } = await import('~/composables/useTheme')
+      const { withHeaderUnlocked } = await import('~/helpers/univer-protect')
+      const { darkTheme } = useTheme()
+      const isDark = !!darkTheme.value
+      await withHeaderUnlocked(univerAPI, async () => {
+        const wb = univerAPI.getActiveWorkbook?.()
+        const sheets = wb?.getSheets?.() || []
+        for (const s of sheets as any[]) {
+          for (let col = 0; col < 28; col++) {
+            s.getRange(0, col)?.setValue?.({ s: isDark ? 'hdrDark' : 'hdr' })
+          }
+        }
+      })
+    } catch {}
+  } catch {}
 
   // Register sheet events (1: user edits → 2: send add/update)
   registerUniverEvents(univerAPI);
@@ -191,6 +232,20 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
           for (let col = 0; col < 28; col++) {
             const v = mapValueByCol(item, col);
             sheet.getRange(row, col).setValue({ v });
+          }
+          // Apply lock styling only for managers if managerBlock
+          const isManager = me?.roleCode === 'ROLE_MANAGER';
+          if (isManager && item?.managerBlock) {
+            // gray all columns except ID (27)
+            for (let col = 0; col < 27; col++) {
+              sheet.getRange(row, col).setValue({ s: 'lockedRow'})
+            }
+          } else {
+            // reset to default styles: lockedCol for 25/26, 'ar' for others, keep id (27)
+            for (let col = 0; col < 27; col++) {
+              const style = (col === 25 || col === 26) ? 'lockedCol' : 'ar';
+              sheet.getRange(row, col)
+            }
           }
         });
 

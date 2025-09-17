@@ -11,7 +11,7 @@
         </div>
       </div>
 
-      <div class="absolute -top-13 right-10">
+      <div class="absolute flex items-center gap-10 -top-13 right-10">
         <UButton
           :color="deleteState.pending ? 'error' : 'primary'"
           :variant="deleteState.pending ? 'solid' : 'soft'"
@@ -50,6 +50,8 @@ const deleteState = reactive<{ pending: boolean; rows: number[]; timeout?: numbe
   timeout: null,
 })
 
+
+
 function getSelectionData() {
   const wb = api.value?.getActiveWorkbook?.()
   const ws = wb?.getActiveSheet?.()
@@ -73,15 +75,6 @@ async function onDeleteClick() {
   }
 
   const { startRow, endRow } = selection
-
-  // if (startRow === 1 && endRow === 1) {
-  //   toast.add({
-  //     title: 'Выберите строки для удаления',
-  //     color: 'error',
-  //     icon: 'i-lucide-alert-circle',
-  //   })
-  //   return
-  // }
 
   if (!deleteState.pending) {
     deleteState.pending = true
@@ -167,6 +160,13 @@ onMounted(async () => {
   const dataLoaded = ref(true);
 
   api.value = await initUniver(records.value);
+  
+  // Apply current theme to Univer after init
+  try {
+    const { useTheme } = await import('~/composables/useTheme')
+    const { darkTheme } = useTheme()
+    api.value?.toggleDarkMode?.(darkTheme.value)
+  } catch {}
 
   const { rendered } = getLifeCycleState(api.value!);
 

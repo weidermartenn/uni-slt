@@ -28,7 +28,9 @@ export function autoFitColumnAndRowData(
             if (s.length > maxLen) maxLen = s.length
         }
         const width = Math.min(maxCol, Math.max(minCol, Math.ceil(maxLen * pxPerChar) + paddingX))
-        const finalWidth = (c === 6) ? 200 : width // G column (index 6) fixed width
+        const optionsCols = new Set([8, 15])
+        const finalColumns = new Set([0, 3, 4, 16, 17])
+        const finalWidth = (c === 6) ? 200 : (optionsCols.has(c)) ? 130 : (finalColumns.has(c)) ? 120 : width
         columnData[c] = { w: finalWidth, hd: 0 }
     }
 

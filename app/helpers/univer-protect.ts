@@ -1,5 +1,8 @@
 import type { FUniver } from "@univerjs/presets";
 
+// Map sheetId -> permissionId for header protections
+const headerProtectionMap = new Map<string, string>();
+
 export async function lockHeaders(api: FUniver) {
     const wb = api.getActiveWorkbook()
     if (!wb) return;
@@ -23,6 +26,42 @@ export async function lockHeaders(api: FUniver) {
         const res = await permission.addRangeBaseProtection(unitId, subUnitId, [range])
         if (!res) continue
         const { permissionId } = res
+        headerProtectionMap.set(subUnitId, permissionId)
         permission.setRangeProtectionPermissionPoint(unitId, subUnitId, permissionId, point, false)
+    }
+}
+
+// Temporarily allow editing header (A1:AB1) while applying changes
+export async function withHeaderUnlocked(api: FUniver, fn: () => Promise<void> | void) {
+    const wb = api.getActiveWorkbook?.()
+    const permission = wb?.getPermission?.()
+    const point = (permission as any)?.permissionPointsDefinition?.RangeProtectionPermissionEditPoint
+    const unitId = wb?.getId?.()
+
+    if (!wb || !permission || !point || !unitId) {
+        await fn()
+        return
+    }
+
+    const sheets = wb.getSheets?.() || []
+    try {
+        for (const sid of sheets as any[]) {
+            const subUnitId = sid.getSheetId?.()
+            const permissionId = subUnitId ? headerProtectionMap.get(subUnitId) : undefined
+            if (permissionId) {
+                // enable editing for header range
+                permission.setRangeProtectionPermissionPoint(unitId, subUnitId, permissionId, point, true)
+            }
+        }
+        await fn()
+    } finally {
+        for (const sid of sheets as any[]) {
+            const subUnitId = sid.getSheetId?.()
+            const permissionId = subUnitId ? headerProtectionMap.get(subUnitId) : undefined
+            if (permissionId) {
+                // disable editing back
+                permission.setRangeProtectionPermissionPoint(unitId, subUnitId, permissionId, point, false)
+            }
+        }
     }
 }

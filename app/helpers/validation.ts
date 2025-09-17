@@ -1,5 +1,6 @@
-import { HorizontalAlign, WrapStrategy, type FUniver } from "@univerjs/presets";
+import { WrapStrategy, type FUniver } from "@univerjs/presets";
 import { useEmployeeStore } from "~/stores/employee-store";
+import { useSheetStore } from "~/stores/sheet-store";
 import { useValidationStore } from "~/stores/validation-store";
 
 export async function addDataValidation(api: FUniver) {
@@ -46,6 +47,7 @@ export async function addDataValidation(api: FUniver) {
     applyDateValidation('A2:A1000')
     applyDateValidation('E2:E1000')
     applyDateValidation('L2:L1000')
+    applyDateValidation('M2:M1000')
     applyDateValidation('T2:T1000')
 
     const applyOptionValidation = (a1: string) => {
@@ -67,19 +69,8 @@ export async function addDataValidation(api: FUniver) {
 
     const managerR = ws?.getRange('U2:X1000');
 
-    const employeeOptions = (employeeStore.employees as (string | null | undefined)[])
-      .map((full) => {
-        const raw = (full ?? '').trim()
-        if (!raw) return null
-        if (raw === 'Бухгалтерия') return raw
-        const parts = raw.split(/\s+/)
-        if (parts.length >= 2) return `${parts[0]} ${parts[1]}`
-        return null
-      })
-      .filter((v): v is string => !!v)
-
     const managerRule = api.newDataValidation() 
-        .requireValueInList(employeeOptions)
+        .requireValueInList(employeeStore.employees)
         .setOptions({
             showErrorMessage: true,
             error: 'Значение должно быть из списка менеджеров',
@@ -87,6 +78,4 @@ export async function addDataValidation(api: FUniver) {
         .build();
 
     managerR?.setDataValidation(managerRule);
-
-
 }

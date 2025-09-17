@@ -10,6 +10,20 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const requestedRows = new Set<string>();
   let batchPasteInProgress = false;
 
+  // Lazy user fetch + helpers
+  let cachedMe: any | undefined;
+  const getMe = async () => {
+    if (cachedMe !== undefined) return cachedMe;
+    const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined;
+    cachedMe = await $fetch('/api/auth/me', { headers }).catch(() => null);
+    return cachedMe;
+  };
+  const isRowLockedForManager = (listName: string, row: number, store: ReturnType<typeof useSheetStore>) => {
+    const items = (store.records as any)?.[listName] as any[] | undefined;
+    const rec = Array.isArray(items) ? items[row - 1] : undefined;
+    return !!(rec?.managerBlock);
+  };
+
   // Extract raw cell value -> string (deeply unwraps { v: ... } and rich-text)
   const unwrapV = (x: any): any => (x && typeof x === 'object' && 'v' in x) ? unwrapV((x as any).v) : x;
   const toStr = (raw: any): string => {
@@ -97,6 +111,29 @@ export function registerUniverEvents(univerAPI: FUniver) {
         range.setValue({ v: normalizedDate });
       }
     }
+
+    // 1.1) Block edits for managers on managerBlock rows (except ID column 27)
+    try {
+      const me = await getMe();
+      const isManager = me?.roleCode === 'ROLE_MANAGER';
+      const sheetStore = useSheetStore();
+      if (isManager) {
+        const listName = s.getName();
+        if (isRowLockedForManager(listName, row, sheetStore)) {
+          await univerAPI.undo();
+          try {
+            const toast = useToast();
+            toast.add({
+              title: 'Строка заблокирована',
+              description: 'Эту строку нельзя редактировать (managerBlock)',
+              color: 'warning',
+              duration: 2500,
+            });
+          } catch {}
+          return; // stop further processing
+        }
+      }
+    } catch {}
 
     // highlight edited row briefly on all clients
     highlightRow(aws, row);
@@ -325,6 +362,29 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       const listName = s.getName();
       const sheetStore = useSheetStore();
+
+      // Prevent paste into locked rows for managers
+      try {
+        const me = await getMe();
+        const isManager = me?.roleCode === 'ROLE_MANAGER';
+        if (isManager) {
+          for (let r = Math.max(1, startRow); r <= endRow; r++) {
+            if (isRowLockedForManager(listName, r, sheetStore)) {
+              await univerAPI.undo();
+              try {
+                const toast = useToast();
+                toast.add({
+                  title: 'Строка заблокирована',
+                  description: 'Вставка запрещена в заблокированную строку (managerBlock)',
+                  color: 'warning',
+                  duration: 2500,
+                });
+              } catch {}
+              return; // abort handling
+            }
+          }
+        }
+      } catch {}
 
       // 1) Post-normalize pasted cells in-place (UI + source for DTOs)
       const isNumericCol = (absColIndex: number) => new Set([9, 16, 17, 24, 25, 26]).has(absColIndex);
