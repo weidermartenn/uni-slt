@@ -11,6 +11,7 @@ import { lockHeaders } from '~/helpers/univer-protect';
 import { registerUniverEvents } from '~/helpers/univer-events';
 import { useSheetStore } from '~/stores/sheet-store';
 import { addFilters } from '~/helpers/filters';
+import { UniverSheetsCustomMenuPlugin } from '~/univer/custom-menu'
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') {
@@ -45,7 +46,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   await import('@univerjs/network/facade');
   await import('@univerjs/preset-sheets-filter/lib/index.css');
 
-  const { univerAPI } = createUniver({
+  const { univer, univerAPI } = createUniver({
     locale: LocaleType.RU_RU,
     locales: {
       [LocaleType.EN_US]: mergeLocales(
@@ -66,12 +67,13 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         footer: {
           menus: false,
         },
-        contextMenu: false,
       }),
       UniverSheetsDataValidationPreset(),
       UniverSheetsFilterPreset()
     ],
   });
+
+  univer.registerPlugin(UniverSheetsCustomMenuPlugin)
 
   const sheets: Record<string, any> = {};
   let i = 0;

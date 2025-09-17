@@ -15,7 +15,17 @@ export default defineNuxtConfig({
       websocket: true
     }
   },
+  experimental: {
+    decorators: true
+  },
   vite: {
+    esbuild: {
+      tsconfigRaw: {
+        compilerOptions: {
+          experimentalDecorators: true
+        }
+      }
+    },
     build: {
       sourcemap: false, cssMinify: true,
       // chunkSizeWarningLimit: 2000,
