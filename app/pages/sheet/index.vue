@@ -3,15 +3,19 @@
     <div class="relative w-full h-[90vh]">
       <div
         v-show="showFallback"
-        class="absolute inset-0 flex items-center justify-center bg-white/90 z-10"
+        class="absolute inset-0 flex items-center justify-center bg-white/90 dark:bg-zinc-900 z-10"
       >
         <div class="text-center">
-          <UIcon name="i-lucide-loader-pinwheel" class="w-10 h-10 animate-spin" />
-          <p class="mt-2 text-lg font-medium">Загрузка данных таблицы</p>
+          <UIcon name="i-lucide-loader-pinwheel" class="w-10 h-10 animate-spin text-zinc-900 dark:text-zinc-100" />
+          <p class="mt-2 text-lg font-medium text-zinc-900 dark:text-zinc-100">Загрузка данных таблицы</p>
         </div>
       </div>
 
       <div class="absolute flex items-center gap-10 -top-13 right-10">
+        <div v-show="deleteState.pending" class="v-row items-center p-2 rounded-md bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
+          <UIcon name="i-lucide-loader-circle" class="w-6 h-6 animate-spin" />
+          <p class="text-sm font-medium text-zinc-900 dark:text-zinc-100">Удаление данных</p>
+        </div>
         <UButton
           :color="deleteState.pending ? 'error' : 'primary'"
           :variant="deleteState.pending ? 'solid' : 'soft'"
@@ -37,6 +41,7 @@ useHead({
 })
 
 const showFallback = ref(true);
+const showBusy = ref(false)
 const toast = useToast();
 
 const api = ref<FUniver>();
@@ -73,6 +78,18 @@ async function onDeleteClick() {
   if (!selection) {
     return
   }
+  const highlightRow = (aws: any, row: number) => {
+    try {
+      const range = aws.getRange(row, 0, 1, 28);
+      range.useThemeStyle('light-red');
+      const currentTheme = range.getUsedThemeStyle();
+      setTimeout(() => {
+        try { range.removeThemeStyle(currentTheme); } catch {}
+      }, 1000);
+    } catch (e) {
+      console.warn('[univer-events] highlightRow failed', e);
+    }
+  };
 
   const { startRow, endRow } = selection
 
@@ -111,6 +128,7 @@ async function onDeleteClick() {
   try {
     const store = useSheetStore()
     await store.deleteRecords(ids)
+    showBusy.value = true
     // очистить только значения (сохраняя стили/валидации)
     const ws = api.value?.getActiveWorkbook?.()?.getActiveSheet?.()
     if (ws) {
@@ -127,6 +145,7 @@ async function onDeleteClick() {
         color: 'success',
         icon: 'i-lucide-check',
       })
+      showBusy.value = false
     }
   } finally {
     deleteState.pending = false

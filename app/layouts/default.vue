@@ -1,5 +1,5 @@
 <template>
-  <div :class="[ (isHydrated && darkTheme) ? 'bg-zinc-900' : 'bg-white']">
+  <div class="bg-white dark:bg-zinc-900">
     <div class="v-row items-center gap-2 p-4">
       <!-- Кнопка ТОЛЬКО она открывает слайдовер -->
       <UButton
@@ -9,7 +9,7 @@
         icon="i-lucide-menu"
         @click="isMenuOpen = true"
       />
-      <span :class="[ (isHydrated && darkTheme) ? 'text-zinc-50' : 'text-black']">Главное меню</span>
+      <span class="text-zinc-900 dark:text-zinc-100">Главное меню</span>
       <div class="">
         <ClientOnly>
           <USwitch v-model="darkTheme" size="lg" label="Тёмная тема" />

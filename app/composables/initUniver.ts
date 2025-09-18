@@ -12,6 +12,10 @@ import { registerUniverEvents } from '~/helpers/univer-events';
 import { useSheetStore } from '~/stores/sheet-store';
 import { addFilters } from '~/helpers/filters';
 import { UniverSheetsCustomMenuPlugin } from '~/univer/custom-menu'
+import { UniverVue3AdapterPlugin } from '@univerjs/ui-adapter-vue3';
+import BidButtonIcon from '~/univer/custom-menu/components/button-icon/BidButtonIcon.vue';
+import AgreementButtonIcon from '~/univer/custom-menu/components/button-icon/AgreementButtonIcon.vue';
+import { contextMenu } from '#build/ui';
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') {
@@ -67,13 +71,37 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         footer: {
           menus: false,
         },
+        menu: {
+          'sheet.menu.paste-special': {
+            hidden: true
+          },
+          'sheet.menu.delete': {
+            hidden: true
+          },
+          'sheet.menu.cell-insert': {
+            hidden: true
+          },
+          'sheet.menu.clear-selection': {
+            hidden: true
+          },
+          'sheet.contextMenu.permission': {
+            hidden: true
+          },
+          'sheet.menu.sheet-frozen': {
+            hidden: true
+          }
+        }
       }),
       UniverSheetsDataValidationPreset(),
       UniverSheetsFilterPreset()
     ],
   });
 
+  univer.registerPlugin(UniverVue3AdapterPlugin)
   univer.registerPlugin(UniverSheetsCustomMenuPlugin)
+
+  univerAPI.registerComponent('BidButtonIcon', BidButtonIcon, { framework: 'vue3' })
+  univerAPI.registerComponent('AgreementButtonIcon', AgreementButtonIcon, { framework: 'vue3' })
 
   const sheets: Record<string, any> = {};
   let i = 0;

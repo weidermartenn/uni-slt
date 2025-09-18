@@ -15,6 +15,7 @@ export function BidButtonMenuItemFactory(): IMenuButtonItem<string> {
     return {
         id: BidButtonOperation.id,
         type: MenuItemType.BUTTON,
+        icon: 'BidButtonIcon',
         title: 'bidButton.button'
     }
 }
@@ -23,6 +24,7 @@ export function AgreementButtonMenuItemFactory(): IMenuButtonItem<string> {
     return {
         id: AgreementButtonOperation.id,
         type: MenuItemType.BUTTON,
+        icon: 'AgreementButtonIcon',
         title: 'agreementButton.button'
     }
 }

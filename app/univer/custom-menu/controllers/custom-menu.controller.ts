@@ -4,7 +4,7 @@ import { ComponentManager, IMenuManagerService } from "@univerjs/ui";
 import { BidButtonOperation, AgreementButtonOperation, SingleButtonOperation } from "../commands/operations/single-button.operations";
 import { ContextMenuGroup, ContextMenuPosition } from "@univerjs/ui";
 import { CustomMenuItemSingleButtonFactory, BidButtonMenuItemFactory, AgreementButtonMenuItemFactory } from "./menu";
-
+import BidButtonIcon from '../components/button-icon/BidButtonIcon.vue'
 export class CustomMenuController extends Disposable {
     constructor(
         @Inject(Injector) private readonly _injector: Injector,
@@ -28,9 +28,8 @@ export class CustomMenuController extends Disposable {
     }
 
     private _registerComponents(): void { 
-
+        
     }
-
     private _initMenus(): void {
         this._menuManagerService.mergeMenu({
             [ContextMenuPosition.MAIN_AREA]: {
