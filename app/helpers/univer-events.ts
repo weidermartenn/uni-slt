@@ -19,6 +19,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return cachedMe;
   };
   const isRowLockedForManager = (listName: string, row: number, store: ReturnType<typeof useSheetStore>) => {
+    if (row <= 0) return false
     const items = (store.records as any)?.[listName] as any[] | undefined;
     const rec = Array.isArray(items) ? items[row - 1] : undefined;
     return !!(rec?.managerBlock);
@@ -117,9 +118,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const me = await getMe();
       const isManager = me?.roleCode === 'ROLE_MANAGER';
       const sheetStore = useSheetStore();
+      const ID_COL = 27;
       if (isManager) {
         const listName = s.getName();
-        if (isRowLockedForManager(listName, row, sheetStore)) {
+        if (isRowLockedForManager(listName, row, sheetStore) && col !== ID_COL) {
           await univerAPI.undo();
           try {
             const toast = useToast();
@@ -130,7 +132,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
               duration: 2500,
             });
           } catch {}
-          return; // stop further processing
+          return;
         }
       }
     } catch {}
@@ -231,9 +233,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   // Clipboard paste handling (multi-row)
   const offBeforePaste = univerAPI.addEvent(univerAPI.Event.BeforeClipboardPaste, async (params: any) => {
-
+    batchPasteInProgress = true;
     const { text, html } = params;
-    console.log('data to paste', text)
 
     const wb = univerAPI.getActiveWorkbook();
     const aws = wb?.getActiveSheet();
@@ -351,8 +352,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (!wb || !aws || !s) return;
 
     try {
-      batchPasteInProgress = true;
-
       // Determine pasted rectangle from selection (active range after paste)
       const ar = aws.getSelection()?.getActiveRange?.();
       const startRow = (ar?._range?.startRow ?? 0);
@@ -394,33 +393,38 @@ export function registerUniverEvents(univerAPI: FUniver) {
         return x.replace(/\s+/g, '').replace(',', '.');
       };
 
-      for (let r = Math.max(1, startRow); r <= endRow; r++) { // skip header row (0)
-        for (let c = startCol; c <= endCol; c++) {
-          if (dateCols.has(c)) {
-            const raw = s.getCell(r, c);
-            const nv = normalizeDateInput(raw);
-            if (nv && nv !== toStr(raw)) {
-              aws.getRange(r, c).setValue({ v: nv });
-            }
-          } else if (isNumericCol(c)) {
-            const raw = toStr(s.getCell(r, c));
-            const nv = normalizeNumberStr(raw);
-            if (nv !== raw) {
-              aws.getRange(r, c).setValue({ v: nv });
+      const sr = Math.max(1, startRow)
+      const rows = endRow - sr + 1
+      const cols = endCol - startCol + 1 
+      if (rows > 0 && cols > 0) {
+        const block = aws.getRange(sr, startCol, rows, cols)
+        const values = block.getValues() 
+
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const absCol = startCol + c
+            if (dateCols.has(absCol)) {
+              const nv = normalizeDateInput(values[r]![c])
+              if (typeof nv === 'string') values[r][c] = { v: nv }
+            } else if (isNumericCol(absCol)) {
+              const raw = toStr(values[r][c])
+              const nv = normalizeNumberStr(raw)
+              if (nv !== raw) values[r][c] = { v: nv }
             }
           }
         }
+        block.setValues(values)
       }
-
       // 2) Collect rows without ID (new records) that contain data
       const dtos: any[] = [];
-      for (let r = Math.max(1, startRow); r <= endRow; r++) { // skip header row (0)
-        const idStr = toStr(s.getCell(r, 27));
+      for (let r = Math.max(1, startRow); r <= endRow; r++) { 
+        const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
+        const idStr = toStr(rowVals[28]);
         if (idStr) continue; // existing record -> let normal update path handle next edits
 
         // check any data in visible columns (0..26)
         let hasData = false;
-        for (let c = 0; c <= 26; c++) { if (toStr(s.getCell(r, c))) { hasData = true; break; } }
+        for (let c = 0; c <= 26; c++) { if (rowVals[c]) { hasData = true; break; } }
         if (!hasData) continue;
 
         const V = (c: number) => toStr(s.getCell(r, c));
@@ -466,11 +470,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
         await sheetStore.addRecords(dtos);
         // highlight all affected rows briefly
         for (let r = Math.max(1, startRow); r <= endRow; r++) {
-          const idStr = toStr(s.getCell(r, 27));
-          // подсветим только строки с данными
-          let hasData = false;
-          for (let c = 0; c <= 26; c++) { if (toStr(s.getCell(r, c))) { hasData = true; break; } }
-          if (hasData) highlightRow(aws, r);
+          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
+          let hasData = false
+          for (let c = 0; c <= 26; c++) { if (toStr(rowVals[c])) { hasData = true; break; } }
+          if (hasData) highlightRow(aws, r)
         }
       }
     } catch (e) {

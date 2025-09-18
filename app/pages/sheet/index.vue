@@ -55,8 +55,6 @@ const deleteState = reactive<{ pending: boolean; rows: number[]; timeout?: numbe
   timeout: null,
 })
 
-
-
 function getSelectionData() {
   const wb = api.value?.getActiveWorkbook?.()
   const ws = wb?.getActiveSheet?.()
@@ -100,7 +98,7 @@ async function onDeleteClick() {
   }
 
   const sel = getSelectionData()
-  if (!sel) return
+  if (!sel) { deleteState.pending = false; deleteState.rows = []; return }
 
   const ID_COL_INDEX = 27 // AB column (0-based)
   const ids = (sel.values as any[][])
@@ -115,16 +113,15 @@ async function onDeleteClick() {
 
   try {
     const store = useSheetStore()
-    await store.deleteRecords(ids)
     showBusy.value = true
+    await store.deleteRecords(ids)
     // очистить только значения (сохраняя стили/валидации)
     const ws = api.value?.getActiveWorkbook?.()?.getActiveSheet?.()
     if (ws) {
-      for (let r = sel.startRow; r <= sel.endRow; r++) {
-        for (let c = 0; c < 28; c++) {
-          ws.getRange(r, c)?.setValue?.({ v: '' })
-        }
-      }
+      const rows = sel.endRow - sel.startRow + 1
+      const cols = 28 
+      const empty = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ({ v: '' })))
+      ws.getRange(sel.startRow, 0, rows, cols).setValues(empty)
     }
     if (store.$state.loading === false) {
       toast.add({
@@ -135,6 +132,9 @@ async function onDeleteClick() {
       })
       showBusy.value = false
     }
+  } catch (e) {
+    console.log(e)
+    return
   } finally {
     deleteState.pending = false
     deleteState.rows = []
