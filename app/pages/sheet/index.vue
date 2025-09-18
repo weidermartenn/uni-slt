@@ -78,18 +78,6 @@ async function onDeleteClick() {
   if (!selection) {
     return
   }
-  const highlightRow = (aws: any, row: number) => {
-    try {
-      const range = aws.getRange(row, 0, 1, 28);
-      range.useThemeStyle('light-red');
-      const currentTheme = range.getUsedThemeStyle();
-      setTimeout(() => {
-        try { range.removeThemeStyle(currentTheme); } catch {}
-      }, 1000);
-    } catch (e) {
-      console.warn('[univer-events] highlightRow failed', e);
-    }
-  };
 
   const { startRow, endRow } = selection
 

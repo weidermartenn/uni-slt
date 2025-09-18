@@ -30,7 +30,7 @@ export function autoFitColumnAndRowData(
         const width = Math.min(maxCol, Math.max(minCol, Math.ceil(maxLen * pxPerChar) + paddingX))
         const optionsCols = new Set([8, 15])
         const finalColumns = new Set([0, 3, 4, 16, 17])
-        const finalWidth = (c === 6) ? 200 : (optionsCols.has(c)) ? 130 : (finalColumns.has(c)) ? 120 : width
+        const finalWidth = (c === 6) ? 200 : (optionsCols.has(c)) ? 130 : (finalColumns.has(c)) ? 120 : (c === 7) ? 200 : width
         columnData[c] = { w: finalWidth, hd: 0 }
     }
 

@@ -15,7 +15,7 @@ import { UniverSheetsCustomMenuPlugin } from '~/univer/custom-menu'
 import { UniverVue3AdapterPlugin } from '@univerjs/ui-adapter-vue3';
 import BidButtonIcon from '~/univer/custom-menu/components/button-icon/BidButtonIcon.vue';
 import AgreementButtonIcon from '~/univer/custom-menu/components/button-icon/AgreementButtonIcon.vue';
-import { contextMenu } from '#build/ui';
+import { addConditionalFormatting } from '~/helpers/conditionalFormatting';
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') {
@@ -34,6 +34,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     { UniverSheetsFilterPreset },
     UniverPresetSheetsFilterEnUS,
     UniverPresetSheetsFilterRuRU,
+    { UniverSheetsConditionalFormattingPreset },
+    UniverPresetSheetsConditionalFormattingEnUS,
+    UniverPresetSheetsConditionalFormattingRuRU
   ] = await Promise.all([
     import('@univerjs/presets'),
     import('@univerjs/preset-sheets-core'),
@@ -44,11 +47,15 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     import('@univerjs/preset-sheets-data-validation/locales/ru-RU'),
     import('@univerjs/preset-sheets-filter'),
     import('@univerjs/preset-sheets-filter/locales/en-US'),
-    import('@univerjs/preset-sheets-filter/locales/ru-RU')
+    import('@univerjs/preset-sheets-filter/locales/ru-RU'),
+    import('@univerjs/preset-sheets-conditional-formatting'),
+    import('@univerjs/preset-sheets-conditional-formatting/locales/en-US'),
+    import('@univerjs/preset-sheets-conditional-formatting/locales/ru-RU'),
   ]);
 
   await import('@univerjs/network/facade');
   await import('@univerjs/preset-sheets-filter/lib/index.css');
+  await import('@univerjs/preset-sheets-conditional-formatting/lib/index.css');
 
   const { univer, univerAPI } = createUniver({
     locale: LocaleType.RU_RU,
@@ -56,12 +63,14 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       [LocaleType.EN_US]: mergeLocales(
         (SheetsCoreEnUS as any).default ?? SheetsCoreEnUS,
         (SheetsDVEnUS as any).default ?? SheetsDVEnUS,
-        (UniverPresetSheetsFilterEnUS as any).default ?? UniverPresetSheetsFilterEnUS
+        (UniverPresetSheetsFilterEnUS as any).default ?? UniverPresetSheetsFilterEnUS,
+        (UniverPresetSheetsConditionalFormattingEnUS as any).default ?? UniverPresetSheetsConditionalFormattingEnUS
       ),
       [LocaleType.RU_RU]: mergeLocales(
         (SheetsCoreRuRU as any).default ?? SheetsCoreRuRU,
         (SheetsDVRuRU as any).default ?? SheetsDVRuRU,
-        (UniverPresetSheetsFilterRuRU as any).default ?? UniverPresetSheetsFilterRuRU
+        (UniverPresetSheetsFilterRuRU as any).default ?? UniverPresetSheetsFilterRuRU,
+        (UniverPresetSheetsConditionalFormattingRuRU as any).default ?? UniverPresetSheetsConditionalFormattingRuRU
       ),
     },
     presets: [
@@ -93,7 +102,8 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         }
       }),
       UniverSheetsDataValidationPreset(),
-      UniverSheetsFilterPreset()
+      UniverSheetsFilterPreset(),
+      UniverSheetsConditionalFormattingPreset(),
     ],
   });
 
@@ -298,6 +308,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   }
 
   await addDataValidation(univerAPI);
+  await addConditionalFormatting(univerAPI);
   await lockHeaders(univerAPI);
 
   return univerAPI;

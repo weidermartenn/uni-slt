@@ -3,7 +3,7 @@ import type { IStyleData } from "@univerjs/presets";
 export const styles: Record<string, IStyleData> = {
   // Light header (original)
   hdr: {
-    bg: { rgb: "#5CCCCC" },
+    bg: { rgb: "#75D54C" },
     cl: { rgb: "#000000" },
     tb: 3,
     ht: 1,
@@ -15,7 +15,7 @@ export const styles: Record<string, IStyleData> = {
   },
   // Dark header
   hdrDark: {
-    bg: { rgb: "#2C7A7B" },
+    bg: { rgb: "#44AA18" },
     cl: { rgb: "#FFFFFF" },
     tb: 3,
     ht: 1,
@@ -41,6 +41,12 @@ export const styles: Record<string, IStyleData> = {
     vt: 2,
     pd: {
       l: 4,
+    },
+    bd: {
+      l: { s: 1, cl: { rgb: "#DDDDDD" } },
+      t: { s: 1, cl: { rgb: "#DDDDDD" } },
+      b: { s: 1, cl: { rgb: "#DDDDDD" } },
+      r: { s: 1, cl: { rgb: "#DDDDDD" } },
     },
   },
   lockedRow: {
