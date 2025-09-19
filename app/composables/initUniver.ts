@@ -17,6 +17,7 @@ import BidButtonIcon from '~/univer/custom-menu/components/button-icon/BidButton
 import AgreementButtonIcon from '~/univer/custom-menu/components/button-icon/AgreementButtonIcon.vue';
 import { addConditionalFormatting } from '~/helpers/conditionalFormatting';
 
+const tr = ref<number>(0);
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') {
@@ -145,17 +146,19 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27])
 
     const totalRows = data.length + rowsToAdd 
+    tr.value = totalRows
     for (let r = data.length + 1; r < totalRows; r++) {
       const empty: Record<number, { v: any, s?: string }> = {}
       for (let c = 0; c < 28; c++) {
-        // Set cell style based on column and user role
-        let style = 'ar';
+        let style = 'a';
         if (c === 27) {
           style = 'id';
         } else if (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(c)) {
           style = 'lockedCol';
         } else if ([4, 25, 26].includes(c)) {
           style = 'lockedCol';
+        } else if (c === 0) {
+          style = 'ar'
         }
         empty[c] = { v: '', s: style };
       } 
@@ -343,6 +346,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   }
 
   await addDataValidation(univerAPI);
+  await addFilters(univerAPI, tr.value)
   await addConditionalFormatting(univerAPI);
   await lockHeaders(univerAPI);
 

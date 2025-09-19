@@ -38,6 +38,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
       return true;
     }
 
+    if (col === 0) return false
+
     // 2. Проверяем динамические правила из записи
     const items = (store.records as any)?.[listName] as any[] | undefined;
     const rec = Array.isArray(items) ? items[row - 1] : undefined;
@@ -147,6 +149,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const aws = wb.getActiveSheet();
     const s = aws.getSheet();
     if (!s) return;
+
+    const cellValue = toStr(s.getCell(row, col))
+    if (row === 0) return
 
     const a1 = aws.getRange(row, col).getA1Notation();
     console.log('[univer-events] Row change:', { a1, row, col });
@@ -277,6 +282,11 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const isManager = me?.roleCode === 'ROLE_MANAGER';
     const sheetStore = useSheetStore();
     const wb = univerAPI.getActiveWorkbook();
+    const aws = wb?.getActiveSheet();
+    const s = aws?.getSheet()
+    const cellValue = toStr(s?.getCell(row, col))
+
+    if (row === 0) return
     const listName = wb?.getActiveSheet()?.getSheet()?.getName() || '';
 
     if (isManager && isCellLockedForManager(listName, row, col, sheetStore)) {

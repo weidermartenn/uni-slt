@@ -1,14 +1,8 @@
 import type { FUniver } from "@univerjs/presets";
 
-export async function addFilters(api: FUniver) {
+export async function addFilters(api: FUniver, len: number) {
     const aws = api.getActiveWorkbook()?.getActiveSheet()
-    const range = aws?.getRange('A2:D14')
-    let filter = range?.createFilter()
-
-    if (!filter) {
-        aws?.getFilter()?.remove()
-        filter = range?.createFilter()
-    }
-
-    filter?.getRange().getA1Notation()
+    const range = aws?.getRange(`A1:AB${len}`)
+    range?.createFilter()
+    
 }
