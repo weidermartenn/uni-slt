@@ -6,6 +6,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
   // Date columns: A, E, L, M, T -> indices 0, 4, 11, 12, 19
   const dateCols = new Set([0, 4, 11, 12, 19]);
 
+  const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27]);
+
   // Track rows where we already sent "add" to backend to avoid duplicates before socket response
   const requestedRows = new Set<string>();
   let batchPasteInProgress = false;
@@ -19,12 +21,40 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return cachedMe;
   };
 
-  const isRowLockedForManager = (listName: string, row: number, store: ReturnType<typeof useSheetStore>) => {
+  const letterToColumnIndex = (letter: string) => {
+    return letter.charCodeAt(0) - 'A'.charCodeAt(0);
+  };
+
+  const isCellLockedForManager = (
+    listName: string,
+    row: number,
+    col: number,
+    store: ReturnType<typeof useSheetStore>
+  ) => {
     if (row <= 0) return false;
+    
+    // 1. Проверяем статичный список заблокированных колонок
+    if (MANAGER_LOCKED_COLUMNS.has(col)) {
+      return true;
+    }
+
+    // 2. Проверяем динамические правила из записи
     const items = (store.records as any)?.[listName] as any[] | undefined;
     const rec = Array.isArray(items) ? items[row - 1] : undefined;
-    return !!(rec?.managerBlock);
-  };
+    if (!rec || !rec.managerBlockListCell) return false;
+
+    for (const range of rec.managerBlockListCell) {
+      if (range.length === 1 && range[0]) {
+        if (letterToColumnIndex(range[0]) === col) return true;
+      } else if (range.length >= 2 && range[0] && range[1]) {
+        const start = letterToColumnIndex(range[0]);
+        const end = letterToColumnIndex(range[1]);
+        if (col >= start && col <= end) return true;
+      }
+    }
+    
+    return false;
+};
 
   // Extract raw cell value -> string (deeply unwraps { v: ... } and rich-text)
   const unwrapV = (x: any): any => (x && typeof x === 'object' && 'v' in x) ? unwrapV((x as any).v) : x;
@@ -109,11 +139,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
     };
   };
 
-  const offEditEnded = univerAPI.addEvent(univerAPI.Event.SheetEditEnded, async (params: any) => {
-    if (batchPasteInProgress) { return; }
-    const col = params.column;
-    const row = params.row;
-
+  // Function to handle row create/update logic
+  const handleRowChange = async (row: number, col: number) => {
     const wb = univerAPI.getActiveWorkbook();
     if (!wb) return;
 
@@ -122,7 +149,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (!s) return;
 
     const a1 = aws.getRange(row, col).getA1Notation();
-    console.log('[univer-events] SheetEditEnded:', { a1, row, col });
+    console.log('[univer-events] Row change:', { a1, row, col });
 
     // 1) Validate and normalize date inputs on specific columns
     if (dateCols.has(col)) {
@@ -147,30 +174,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
         range.setValue({ v: normalizedDate });
       }
     }
-
-    // 1.1) Block edits for managers on managerBlock rows (except ID column 27)
-    try {
-      const me = await getMe();
-      const isManager = me?.roleCode === 'ROLE_MANAGER';
-      const sheetStore = useSheetStore();
-      const ID_COL = 27;
-      if (isManager) {
-        const listName = s.getName();
-        if (isRowLockedForManager(listName, row, sheetStore) && col !== ID_COL) {
-          await univerAPI.undo();
-          try {
-            const toast = useToast();
-            toast.add({
-              title: 'Строка заблокирована',
-              description: 'Эту строку нельзя редактировать (managerBlock)',
-              color: 'warning',
-              duration: 2500,
-            });
-          } catch {}
-          return;
-        }
-      }
-    } catch {}
 
     // 2) Create or update logic based on ID cell
     try {
@@ -263,6 +266,34 @@ export function registerUniverEvents(univerAPI: FUniver) {
     } catch (e) {
       console.error('[univer-events] handler failed:', e);
     }
+  };
+
+  const offEditEnded = univerAPI.addEvent(univerAPI.Event.SheetEditEnded, async (params: any) => {
+    if (batchPasteInProgress) { return; }
+    const col = params.column;
+    const row = params.row;
+
+    const me = await getMe();
+    const isManager = me?.roleCode === 'ROLE_MANAGER';
+    const sheetStore = useSheetStore();
+    const wb = univerAPI.getActiveWorkbook();
+    const listName = wb?.getActiveSheet()?.getSheet()?.getName() || '';
+
+    if (isManager && isCellLockedForManager(listName, row, col, sheetStore)) {
+      await univerAPI.undo();
+      try {
+        const toast = useToast();
+        toast.add({
+          title: 'Ячейка заблокирована',
+          description: 'Редактирование этой ячейки запрещено.',
+          color: 'warning',
+          duration: 2500,
+        });
+      } catch {}
+      return;
+    }
+
+    await handleRowChange(row, col);
   });
 
   // Clipboard paste handling (multi-row)
@@ -272,7 +303,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
     const wb = univerAPI.getActiveWorkbook();
     const aws = wb?.getActiveSheet();
-    const startCol = aws?.getSelection()?.getActiveRange?.()?._range?.startColumn ?? 0;
+    const startCol = aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0;
 
     const isNumericCol = (absColIndex: number) => new Set([9, 16, 17, 24, 25, 26]).has(absColIndex);
 
@@ -383,11 +414,11 @@ export function registerUniverEvents(univerAPI: FUniver) {
       batchPasteInProgress = true;
 
       // Determine pasted rectangle from selection (active range after paste)
-      const ar = aws.getSelection()?.getActiveRange?.();
-      const startRow = (ar?._range?.startRow ?? 0);
-      const endRow = (ar?._range?.endRow ?? startRow);
-      const startCol = (ar?._range?.startColumn ?? 0);
-      const endCol = (ar?._range?.endColumn ?? startCol);
+      const ar = aws.getSelection()?.getActiveRange?.()?.getRange();
+      const startRow = (ar?.startRow ?? 0);
+      const endRow = (ar?.endRow ?? startRow);
+      const startCol = (ar?.startColumn ?? 0);
+      const endCol = (ar?.endColumn ?? startCol);
 
       const listName = s.getName();
       const sheetStore = useSheetStore();
@@ -398,7 +429,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         const isManager = me?.roleCode === 'ROLE_MANAGER';
         if (isManager) {
           for (let r = Math.max(1, startRow); r <= endRow; r++) {
-            if (isRowLockedForManager(listName, r, sheetStore)) {
+            if (isCellLockedForManager(listName, r, 0, sheetStore)) { // Simplified check for row lock
               await univerAPI.undo();
               try {
                 const toast = useToast();
@@ -508,7 +539,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
   // Return disposer to allow cleanup by caller if needed
   return () => {
     try { (offEditEnded as any)?.dispose?.(); } catch {}
-    try { (offBeforePaste as any)?.dispose?.(); } catch {}
+        try { (offBeforePaste as any)?.dispose?.(); } catch {}
     try { (offPasted as any)?.dispose?.(); } catch {}
   };
 }

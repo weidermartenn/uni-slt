@@ -17,13 +17,15 @@ import BidButtonIcon from '~/univer/custom-menu/components/button-icon/BidButton
 import AgreementButtonIcon from '~/univer/custom-menu/components/button-icon/AgreementButtonIcon.vue';
 import { addConditionalFormatting } from '~/helpers/conditionalFormatting';
 
+
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') {
     throw new Error('initUniver must be called on the client');
   }
 
   const headers = import.meta.server ? useRequestHeaders(["cookie"]) : undefined;
-  const me: any = await $fetch("/api/auth/me", { headers }).catch(() => null)
+  const me: any = await $fetch("/api/auth/me", { headers }).catch(() => null);
+  const toast = useToast();
 
   const [
     { createUniver, LocaleType, mergeLocales }, 
@@ -127,20 +129,35 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     })
 
     const cellData: Record<number, Record<number, { v: any, s?: string }>> = { 0: headerRow }
-    for (let r = 0; r < data.length; r++ ) {
-      const rec = data[r]!
-      cellData[r + 1] = await buildRowCells(rec, me)
+    const isManager = me?.roleCode === 'ROLE_MANAGER';
+    
+    for (let r = 0; r < data.length; r++) {
+      const rec = data[r]!;
+      const rowCells = await buildRowCells(rec, me);
+      
+      cellData[r + 1] = rowCells;
+      
       if (rec?.managerBlock && me?.roleCode !== "ROLE_ADMIN" && me?.roleCode !== "ROLE_BUH") {
-        [26, 27].push(r + 1)
+        [26, 27].push(r + 1);
       }
     }
+
+    const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27])
 
     const totalRows = data.length + rowsToAdd 
     for (let r = data.length + 1; r < totalRows; r++) {
       const empty: Record<number, { v: any, s?: string }> = {}
       for (let c = 0; c < 28; c++) {
-        // Z (25) and AA (26) are locked, AB (27) has id style
-        empty[c] = { v: '', s: c === 27 ? 'id' : ([25, 26].includes(c) ? 'lockedCol' : 'ar') }
+        // Set cell style based on column and user role
+        let style = 'ar';
+        if (c === 27) {
+          style = 'id';
+        } else if (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(c)) {
+          style = 'lockedCol';
+        } else if ([4, 25, 26].includes(c)) {
+          style = 'lockedCol';
+        }
+        empty[c] = { v: '', s: style };
       } 
       cellData[r] = empty
     }
@@ -273,19 +290,37 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
             const v = mapValueByCol(item, col);
             sheet.getRange(row, col).setValue({ v });
           }
-          // Apply lock styling only for managers if managerBlock
+
+          // Apply lock styling based on managerBlock and managerBlockListCell
           const isManager = me?.roleCode === 'ROLE_MANAGER';
-          if (isManager && item?.managerBlock) {
-            // gray all columns except ID (27)
-            for (let col = 0; col < 27; col++) {
-              sheet.getRange(row, col).setValue({ s: 'lockedRow'})
+          const isAdminOrBuh = me?.roleCode === "ROLE_ADMIN" || me?.roleCode === "ROLE_BUH";
+
+          const blockedColumns = new Set<number>();
+          if (isManager && item.managerBlockListCell && Array.isArray(item.managerBlockListCell)) {
+            const letterToColumnIndex = (letter: string) => letter.charCodeAt(0) - 'A'.charCodeAt(0);
+            item.managerBlockListCell.forEach((range: string[]) => {
+              if (range.length === 1 && range[0]) {
+                blockedColumns.add(letterToColumnIndex(range[0]));
+              } else if (range.length >= 2 && range[0] && range[1]) {
+                const start = letterToColumnIndex(range[0]);
+                const end = letterToColumnIndex(range[1]);
+                for (let i = start; i <= end; i++) {
+                  blockedColumns.add(i);
+                }
+              }
+            });
+          }
+
+          for (let col = 0; col < 27; col++) { // excluding ID column
+            let style;
+            if ([25, 26].includes(col) || (isManager && blockedColumns.has(col))) {
+              style = 'lockedCol';
+            } else if (item?.managerBlock && !isAdminOrBuh) {
+              style = 'lockedRow';
+            } else {
+              style = 'ar';
             }
-          } else {
-            // reset to default styles: lockedCol for 25/26, 'ar' for others, keep id (27)
-            for (let col = 0; col < 27; col++) {
-              const style = (col === 25 || col === 26) ? 'lockedCol' : 'ar';
-              sheet.getRange(row, col)
-            }
+            sheet.getRange(row, col).setValue({ s: style });
           }
         });
 

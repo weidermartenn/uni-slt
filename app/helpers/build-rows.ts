@@ -1,10 +1,29 @@
 import type { TransportAccounting } from "~/entities/TransportAccountingDto/types";
 
+const letterToColumnIndex = (letter: string) => {
+  return letter.charCodeAt(0) - 'A'.charCodeAt(0);
+};
+
 export async function buildRowCells(rec: TransportAccounting, me: any) {
+  const blockedColumns = new Set<number>();
+  if (rec.managerBlockListCell && Array.isArray(rec.managerBlockListCell)) {
+    rec.managerBlockListCell.forEach(range => {
+      if (range.length === 1 && range[0]) {
+        blockedColumns.add(letterToColumnIndex(range[0]));
+      } else if (range.length >= 2 && range[0] && range[1]) {
+        const start = letterToColumnIndex(range[0]);
+        const end = letterToColumnIndex(range[1]);
+        for (let i = start; i <= end; i++) {
+          blockedColumns.add(i);
+        }
+      }
+    });
+  }
+
   const cell = (v: any, col: number) =>
     ({
       v: v ?? "",
-      s: [25, 26].includes(col)
+      s: [25, 26].includes(col) || (me?.roleCode === 'ROLE_MANAGER' && blockedColumns.has(col))
         ? "lockedCol"
         : rec?.managerBlock && me?.roleCode !== "ROLE_ADMIN" && me?.roleCode !== "ROLE_BUH"
         ? "lockedRow"
