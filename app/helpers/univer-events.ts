@@ -18,8 +18,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
     cachedMe = await $fetch('/api/auth/me', { headers }).catch(() => null);
     return cachedMe;
   };
+
   const isRowLockedForManager = (listName: string, row: number, store: ReturnType<typeof useSheetStore>) => {
-    if (row <= 0) return false
+    if (row <= 0) return false;
     const items = (store.records as any)?.[listName] as any[] | undefined;
     const rec = Array.isArray(items) ? items[row - 1] : undefined;
     return !!(rec?.managerBlock);
@@ -60,7 +61,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return null;
   };
 
-  // Highlight a full data row temporarily using theme
   const highlightRow = (aws: any, row: number) => {
     try {
       const range = aws.getRange(row, 0, 1, 28);
@@ -72,6 +72,41 @@ export function registerUniverEvents(univerAPI: FUniver) {
     } catch (e) {
       console.warn('[univer-events] highlightRow failed', e);
     }
+  };
+
+  const buildSR = (rowVals: any[]): any => {
+    return {
+      additionalExpenses: rowVals[24] ?? '',
+      addressOfDelivery: rowVals[5] ?? '',
+      cargo: rowVals[2] ?? '',
+      client: rowVals[7] ?? '',
+      clientLead: rowVals[22] ?? '',
+      contractor: rowVals[13] ?? '',
+      contractorRate: rowVals[16] ?? '',
+      dateOfBill: rowVals[11] ?? '',
+      dateOfPaymentContractor: rowVals[19] ?? '',
+      dateOfPickup: rowVals[0] ?? '',
+      dateOfSubmission: rowVals[4] ?? '',
+      datePayment: rowVals[12] ?? '',
+      departmentHead: rowVals[21] ?? '',
+      driver: rowVals[14] ?? '',
+      formPayAs: rowVals[8] ?? '',
+      formPayHim: rowVals[15] ?? '',
+      id: 0, // ID will be added/updated during the request (don't set here for creation)
+      listName: '', // Set appropriate list name here if necessary
+      income: rowVals[25] ?? '',
+      incomeLearned: rowVals[26] ?? '',
+      manager: rowVals[20] ?? '',
+      numberOfBill: rowVals[10] ?? '',
+      numberOfBillAdd: rowVals[18] ?? '',
+      numberOfContainer: rowVals[1] ?? '',
+      ourFirm: rowVals[6] ?? '',
+      salesManager: rowVals[23] ?? '',
+      sumIssued: rowVals[17] ?? '',
+      summa: rowVals[9] ?? '',
+      taxes: '', // Set appropriate value here if necessary
+      typeOfContainer: rowVals[3] ?? '',
+    };
   };
 
   const offEditEnded = univerAPI.addEvent(univerAPI.Event.SheetEditEnded, async (params: any) => {
@@ -137,9 +172,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
       }
     } catch {}
 
-    // highlight edited row briefly on all clients
-    highlightRow(aws, row);
-
     // 2) Create or update logic based on ID cell
     try {
       if (row <= 0) { console.log('[univer-events] Skip header row'); return; }
@@ -202,6 +234,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         try {
           await sheetStore.addRecords([dto]);
           console.log('[univer-events] CREATE: request sent, awaiting socket update');
+          if (sheetStore.loading === false) highlightRow(aws, row);
         } catch (e) {
           console.error('[univer-events] CREATE failed:', { key, error: e });
         } finally {
@@ -223,6 +256,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         console.log('[univer-events] UPDATE: sending updateRecords', { listName, idNum, updateDto });
         await sheetStore.updateRecords([updateDto]);
         console.log('[univer-events] UPDATE: success', { listName, idNum });
+        if (sheetStore.loading === false) highlightRow(aws, row);
       } catch (e) {
         console.error('[univer-events] UPDATE failed', e);
       }
@@ -330,21 +364,15 @@ export function registerUniverEvents(univerAPI: FUniver) {
               return nv;
             }
             if (isNumericCol(absCol)) {
-              const nv = normalizeNumberStr(cell);
-              if (nv !== cell) changed = true;
-              return nv;
+              return normalizeNumberStr(cell);
             }
             return cell;
           })
         : row);
     }
-
-    if (changed) {
-      console.log('[univer-events] BeforeClipboardPaste: normalized dates and numeric fields');
-    }
-    // Allow default paste to proceed
   });
-  
+
+  // Clipboard pasted event
   const offPasted = univerAPI.addEvent(univerAPI.Event.ClipboardPasted, async (params: any) => {
     const wb = univerAPI.getActiveWorkbook();
     const aws = wb?.getActiveSheet();
@@ -352,6 +380,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (!wb || !aws || !s) return;
 
     try {
+      batchPasteInProgress = true;
+
       // Determine pasted rectangle from selection (active range after paste)
       const ar = aws.getSelection()?.getActiveRange?.();
       const startRow = (ar?._range?.startRow ?? 0);
@@ -385,7 +415,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         }
       } catch {}
 
-      // 1) Post-normalize pasted cells in-place (UI + source for DTOs)
+      // Post-normalize pasted cells in-place (UI + source for DTOs)
       const isNumericCol = (absColIndex: number) => new Set([9, 16, 17, 24, 25, 26]).has(absColIndex);
       const normalizeNumberStr = (raw: any): string => {
         const x = (raw ?? '').toString();
@@ -393,87 +423,79 @@ export function registerUniverEvents(univerAPI: FUniver) {
         return x.replace(/\s+/g, '').replace(',', '.');
       };
 
-      const sr = Math.max(1, startRow)
-      const rows = endRow - sr + 1
-      const cols = endCol - startCol + 1 
+      const sr = Math.max(1, startRow);
+      const rows = endRow - sr + 1;
+      const cols = endCol - startCol + 1;
+
       if (rows > 0 && cols > 0) {
-        const block = aws.getRange(sr, startCol, rows, cols)
-        const values = block.getValues() 
+        const block = aws.getRange(sr, startCol, rows, cols);
+        const values = block.getValues();
 
         for (let r = 0; r < rows; r++) {
+          const row = values[r];
+          if (!row) continue;
           for (let c = 0; c < cols; c++) {
-            const absCol = startCol + c
+            const absCol = startCol + c;
+            const cellValue = row[c];
+            if (cellValue == null) continue;
             if (dateCols.has(absCol)) {
-              const nv = normalizeDateInput(values[r]![c])
-              if (typeof nv === 'string') values[r][c] = { v: nv }
+              const nv = normalizeDateInput(cellValue);
+              if (typeof nv === 'string') row[c] = nv;
             } else if (isNumericCol(absCol)) {
-              const raw = toStr(values[r][c])
-              const nv = normalizeNumberStr(raw)
-              if (nv !== raw) values[r][c] = { v: nv }
+              const raw = toStr(cellValue);
+              const nv = normalizeNumberStr(raw);
+              if (nv !== raw) row[c] = nv;
             }
           }
         }
-        block.setValues(values)
+        const cleanedValues = values.map(row => row.map(cell => cell ?? ''));
+        block.setValues(cleanedValues);
       }
-      // 2) Collect rows without ID (new records) that contain data
-      const dtos: any[] = [];
-      for (let r = Math.max(1, startRow); r <= endRow; r++) { 
-        const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
-        const idStr = toStr(rowVals[28]);
-        if (idStr) continue; // existing record -> let normal update path handle next edits
+
+      // Collect rows with or without ID that contain data
+      const createDtos: any[] = [];
+      const updateDtos: any[] = [];
+      for (let r = sr; r <= endRow; r++) {
+        const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
+        const idStr = toStr(rowVals[27]);
 
         // check any data in visible columns (0..26)
         let hasData = false;
         for (let c = 0; c <= 26; c++) { if (rowVals[c]) { hasData = true; break; } }
         if (!hasData) continue;
 
-        const V = (c: number) => toStr(s.getCell(r, c));
-        const dto = {
-          additionalExpenses: V(24),
-          addressOfDelivery: V(5),
-          cargo: V(2),
-          client: V(7),
-          clientLead: V(22),
-          contractor: V(13),
-          contractorRate: V(16),
-          dateOfBill: V(11),
-          dateOfPaymentContractor: V(19),
-          dateOfPickup: V(0),
-          dateOfSubmission: V(4),
-          datePayment: V(12),
-          departmentHead: V(21),
-          driver: V(14),
-          formPayAs: V(8),
-          formPayHim: V(15),
-          id: 0,
-          listName,
-          income: V(25),
-          incomeLearned: V(26),
-          manager: V(20),
-          numberOfBill: V(10),
-          numberOfBillAdd: V(18),
-          numberOfContainer: V(1),
-          ourFirm: V(6),
-          salesManager: V(23),
-          sumIssued: V(17),
-          summa: V(9),
-          taxes: '',
-          typeOfContainer: V(3),
-        };
-        dtos.push(dto);
+        if (idStr) {
+          console.log('[univer-events] updating existing row', idStr);
+          const updateDto = {
+            ...buildSR(rowVals),
+            id: Number(idStr),
+          };
+          updateDtos.push(updateDto);
+        } else {
+          const createDto = buildSR(rowVals);
+          createDtos.push(createDto);
+        }
       }
 
-      if (dtos.length) {
-        console.log('[univer-events] PASTE: addRecords batch', { count: dtos.length });
-        console.log('[univer-events] PASTE: dtos', dtos);
-        // TODO: uncomment when ready to commit changes')
-        await sheetStore.addRecords(dtos);
+      if (createDtos.length) {
+        console.log('[univer-events] PASTE: addRecords batch', { count: createDtos.length });
+        console.log('[univer-events] PASTE: createDtos', createDtos);
+        await sheetStore.addRecords(createDtos);
+      }
+
+      if (updateDtos.length) {
+        console.log('[univer-events] PASTE: updateRecords batch', { count: updateDtos.length });
+        console.log('[univer-events] PASTE: updateDtos', updateDtos);
+        await sheetStore.updateRecords(updateDtos);
+      }
+
+      if (createDtos.length || updateDtos.length) {
         // highlight all affected rows briefly
         for (let r = Math.max(1, startRow); r <= endRow; r++) {
-          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
-          let hasData = false
+          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
+          let hasData = false;
           for (let c = 0; c <= 26; c++) { if (toStr(rowVals[c])) { hasData = true; break; } }
-          if (hasData) highlightRow(aws, r)
+          if (hasData) highlightRow(aws, r);
         }
       }
     } catch (e) {

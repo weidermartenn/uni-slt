@@ -65,6 +65,7 @@ export const useSheetStore = defineStore("sheet", {
 
     async addRecords(dtos: TransportAccountingSR[]) {
       if (!Array.isArray(dtos) || dtos.length === 0) return null;
+
       const res = await $fetch("/api/worktable/record-add", {
         method: "POST",
         body: dtos,

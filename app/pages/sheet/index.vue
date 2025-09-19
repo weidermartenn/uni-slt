@@ -121,7 +121,7 @@ async function onDeleteClick() {
       const rows = sel.endRow - sel.startRow + 1
       const cols = 28 
       const empty = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ({ v: '' })))
-      ws.getRange(sel.startRow, 0, rows, cols).setValues(empty)
+      ws.getRange(sel.startRow + 1, 0, rows, cols).setValues(empty)
     }
     if (store.$state.loading === false) {
       toast.add({
