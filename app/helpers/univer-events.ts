@@ -150,7 +150,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const s = aws.getSheet();
     if (!s) return;
 
-    const cellValue = toStr(s.getCell(row, col))
     if (row === 0) return
 
     const a1 = aws.getRange(row, col).getA1Notation();
