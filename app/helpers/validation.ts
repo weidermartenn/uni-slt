@@ -1,11 +1,10 @@
 import { WrapStrategy, type FUniver } from "@univerjs/presets";
+import type { FWorksheet } from "@univerjs/presets/lib/types/preset-sheets-core/index.js";
 import { useEmployeeStore } from "~/stores/employee-store";
 import { useSheetStore } from "~/stores/sheet-store";
 import { useValidationStore } from "~/stores/validation-store";
 
-export async function addDataValidation(api: FUniver) {
-    const wb = api.getActiveWorkbook(); 
-    const ws = wb?.getActiveSheet();
+export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
 
     const validationStore = useValidationStore()
     const employeeStore = useEmployeeStore()
@@ -15,7 +14,7 @@ export async function addDataValidation(api: FUniver) {
 
     const options = ['С НДС', 'БЕЗ НДС']
 
-    const firmR = ws?.getRange('G2:G1000');
+    const firmR = sheet?.getRange('G2:G1000');
     const firmRule = api.newDataValidation() 
         .requireValueInList(validationStore.companies)
         .setOptions({
@@ -30,7 +29,7 @@ export async function addDataValidation(api: FUniver) {
 
     // Date validation and display format for A, E, L, T columns
     const applyDateValidation = (a1: string) => {
-      const range = ws?.getRange(a1)
+      const range = sheet?.getRange(a1)
       if (!range) return
       const rule = api
         .newDataValidation()
@@ -51,7 +50,7 @@ export async function addDataValidation(api: FUniver) {
     applyDateValidation('T2:T1000')
 
     const applyOptionValidation = (a1: string) => {
-      const range = ws?.getRange(a1)
+      const range = sheet?.getRange(a1)
       if (!range) return 
       const rule = api.newDataValidation() 
         .requireValueInList(options)
@@ -67,7 +66,7 @@ export async function addDataValidation(api: FUniver) {
     applyOptionValidation('I2:I1000')
     applyOptionValidation('P2:P1000')
 
-    const managerR = ws?.getRange('U2:X1000');
+    const managerR = sheet?.getRange('U2:X1000');
 
     const managerRule = api.newDataValidation() 
         .requireValueInList(employeeStore.employees)

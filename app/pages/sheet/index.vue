@@ -25,135 +25,150 @@
           {{ deleteState.pending ? 'Подтвердите удаление' : 'Удалить строки' }}
         </UButton>
       </div>
+
       <div id="univer" class="w-full h-full"></div>
     </div>
-  </UApp> 
+  </UApp>
 </template>
 
 <script setup lang="ts">
 import type { FUniver } from '@univerjs/presets';
+import { nextTick, reactive, ref, watch, onMounted } from 'vue';
 import { useEmployeeStore } from '~/stores/employee-store';
 import { useSheetStore } from '~/stores/sheet-store';
 
 definePageMeta({ ssr: false });
-useHead({
-  title: 'СЛТ Транспортный учет'
-})
+useHead({ title: 'СЛТ Транспортный учет' });
 
 const showFallback = ref(true);
-const showBusy = ref(false)
+const showBusy = ref(false);
 const toast = useToast();
 
 const api = ref<FUniver>();
-const records = ref<Record<string, any[]>>({})
+const records = ref<Record<string, any[]>>({});
 
-const DELETE_CONFIRM_TIMEOUT = 5000
+const DELETE_CONFIRM_TIMEOUT = 5000;
 
 const deleteState = reactive<{ pending: boolean; rows: number[]; timeout?: number | null }>({
   pending: false,
   rows: [],
   timeout: null,
-})
+});
 
+// Возвращаем и 1-based, и 0-based индексы + уже готовый строковый Range для A..AB
 function getSelectionData() {
-  const wb = api.value?.getActiveWorkbook?.()
-  const ws = wb?.getActiveSheet?.()
-  const ar = ws?.getSelection?.()?.getActiveRange?.()
-  if (!ws || !ar) return null
+  const wb = api.value?.getActiveWorkbook?.();
+  const ws = wb?.getActiveSheet?.();
+  const ar = ws?.getSelection?.()?.getActiveRange?.();
+  if (!ws || !ar) return null;
 
-  const startRow = (ar?._range?.startRow ?? 0) + 1
-  const endRow = (ar?._range?.endRow ?? 0) + 1
+  // univer возвращает 0-based индексы; 0 — это строка заголовков
+  const start0 = Math.max(1, (ar?._range?.startRow ?? 1));
+  const end0 = Math.max(1, (ar?._range?.endRow ?? 1));
 
-  const range = ws.getRange(`A${startRow}:AB${endRow}`)
-  range?.activate?.()
-  const values = range?.getValues?.() || []
+  // Преобразуем в 1-based для адресного диапазона
+  const start1 = start0 + 1;
+  const end1 = end0 + 1;
 
-  return { ws, startRow, endRow, range, values }
+  const range = ws.getRange(`A${start1}:AB${end1}`);
+  range?.activate?.();
+
+  const values = range?.getValues?.() || [];
+
+  return { ws, start0, end0, start1, end1, range, values };
 }
 
 async function onDeleteClick() {
-  const selection = getSelectionData()
+  const selection = getSelectionData();
   if (!selection) {
-    return
+    toast.add({ title: 'Не выбрана область', color: 'warning', icon: 'i-lucide-alert-triangle' });
+    return;
   }
 
-  const { startRow, endRow } = selection
+  const { start1, end1 } = selection;
 
+  // Первая кнопка — режим подтверждения
   if (!deleteState.pending) {
-    deleteState.pending = true
-    deleteState.rows = Array.from({ length: endRow - startRow + 1 }, (_, i) => startRow + i)
+    deleteState.pending = true;
+    deleteState.rows = Array.from({ length: end1 - start1 + 1 }, (_, i) => start1 + i);
 
-    if (deleteState.timeout) clearTimeout(deleteState.timeout as number)
+    if (deleteState.timeout) clearTimeout(deleteState.timeout as number);
     deleteState.timeout = window.setTimeout(() => {
-      deleteState.pending = false
-      deleteState.rows = []
-      deleteState.timeout = null
-    }, DELETE_CONFIRM_TIMEOUT)
-    return
+      deleteState.pending = false;
+      deleteState.rows = [];
+      deleteState.timeout = null;
+    }, DELETE_CONFIRM_TIMEOUT);
+
+    return;
   }
 
+  // Подтверждение удаления
   if (deleteState.timeout) {
-    clearTimeout(deleteState.timeout as number)
-    deleteState.timeout = null
+    clearTimeout(deleteState.timeout as number);
+    deleteState.timeout = null;
   }
 
-  const sel = getSelectionData()
-  if (!sel) { deleteState.pending = false; deleteState.rows = []; return }
+  const sel = getSelectionData();
+  if (!sel) { deleteState.pending = false; deleteState.rows = []; return; }
 
-  const ID_COL_INDEX = 27 // AB column (0-based)
+  // 1) Считаем IDs из СНИМКA значений (до очистки UI)
+  const ID_COL_INDEX = 27; // AB (0-based)
   const ids = (sel.values as any[][])
     .map((row) => Number(row?.[ID_COL_INDEX]))
-    .filter((id) => Number.isFinite(id) && id > 0)
+    .filter((id) => Number.isFinite(id) && id > 0);
 
+  // 2) Немедленно очистим UI (даже если ids пустой — это ок)
+  const rows = sel.end1 - sel.start1 + 1;
+  const cols = 28;
+  const empty = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => ({ v: '' }))
+  );
+  sel.range.setValues?.(empty);
+
+  // даём UI возможность отрисоваться до сетевого запроса
+  await nextTick();
+
+  // 3) Дальше — удаление в сторе, если есть что удалять
   if (ids.length === 0) {
-    deleteState.pending = false
-    deleteState.rows = []
-    return
+    // Ничего не удаляем на бэке; просто выходим из режима подтверждения
+    deleteState.pending = false;
+    deleteState.rows = [];
+    toast.add({
+      title: 'Пустое удаление',
+      description: 'В выделении не найдено валидных ID.',
+      color: 'neutral',
+      icon: 'i-lucide-info',
+    });
+    return;
   }
 
   try {
-    const store = useSheetStore()
-    showBusy.value = true
-    await store.deleteRecords(ids)
-    // очистить только значения (сохраняя стили/валидации)
-    const ws = api.value?.getActiveWorkbook?.()?.getActiveSheet?.()
-    if (ws) {
-      const rows = sel.endRow - sel.startRow + 1
-      const cols = 28 
-      const empty = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ({ v: '' })))
-      ws.getRange(sel.startRow + 1, 0, rows, cols).setValues(empty)
-    }
-    if (store.$state.loading === false) {
-      toast.add({
-        title: 'Записи успешно удалены',
-        description: `Всего записей удалено: ${ids.length}`,
-        color: 'success',
-        icon: 'i-lucide-check',
-      })
-      showBusy.value = false
-    }
+    const store = useSheetStore();
+    showBusy.value = true;
+
+    await store.deleteRecords(ids);
+
+    // Успешно
+    toast.add({
+      title: 'Записи удалены',
+      description: `Всего удалено: ${ids.length}`,
+      color: 'success',
+      icon: 'i-lucide-check',
+    });
   } catch (e) {
-    console.log(e)
-    return
+    console.error(e);
+    toast.add({
+      title: 'Ошибка удаления',
+      description: 'Не удалось удалить записи. Попробуйте ещё раз.',
+      color: 'error',
+      icon: 'i-lucide-x-circle',
+    });
   } finally {
-    deleteState.pending = false
-    deleteState.rows = []
+    showBusy.value = false;
+    deleteState.pending = false;
+    deleteState.rows = [];
   }
 }
-
-// legacy helper kept for reference, not used now
-// const selection = () => {
-//   const ws = api.value?.getActiveWorkbook()?.getActiveSheet();
-//   const ar = ws?.getSelection()?.getActiveRange()
-
-//   const startRow = ar?._range.startRow + 1;
-//   const endRow = ar?._range.endRow + 1;
-  
-//   const range = ws?.getRange(`A${startRow}:AB${endRow}`)
-//   range?.activate();
-//   const values = range?.getValues() || [];
-//   console.log(values);
-// }
 
 onMounted(async () => {
   const { initUniver } = await import('~/composables/initUniver');
@@ -167,23 +182,19 @@ onMounted(async () => {
   const dataLoaded = ref(true);
 
   api.value = await initUniver(records.value);
-  
-  // Apply current theme to Univer after init
+
+  // Синхронизируем тему
   try {
-    const { useTheme } = await import('~/composables/useTheme')
-    const { darkTheme } = useTheme()
-    api.value?.toggleDarkMode?.(darkTheme.value)
+    const { useTheme } = await import('~/composables/useTheme');
+    const { darkTheme } = useTheme();
+    api.value?.toggleDarkMode?.(darkTheme.value);
   } catch {}
 
   const { rendered } = getLifeCycleState(api.value!);
 
   const fontsReady = ref(false);
   if (typeof document !== 'undefined' && 'fonts' in document) {
-    (document as any).fonts.ready.then(() => {
-      fontsReady.value = true;
-    }).catch(() => {
-      fontsReady.value = true;
-    });
+    (document as any).fonts.ready.then(() => { fontsReady.value = true; }).catch(() => { fontsReady.value = true; });
   } else {
     fontsReady.value = true;
   }

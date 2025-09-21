@@ -1,13 +1,13 @@
 import type { FUniver } from '@univerjs/presets';
 import type { TransportAccounting } from '~/entities/TransportAccountingDto/types';
-import { watch } from 'vue';
+import { ref } from 'vue';
 import { useNuxtApp } from '#app';
 import { autoFitColumnAndRowData } from '~/helpers/autoFit';
 import { buildRowCells } from '~/helpers/build-rows';
 import { addDataValidation } from '~/helpers/validation';
 import { HEADERS } from '~/pages/sheet/attributes/headers';
 import { styles } from '~/pages/sheet/attributes/styles';
-import { lockHeaders } from '~/helpers/univer-protect';
+import { lockHeaders, withHeaderUnlocked } from '~/helpers/univer-protect';
 import { registerUniverEvents } from '~/helpers/univer-events';
 import { useSheetStore } from '~/stores/sheet-store';
 import { addFilters } from '~/helpers/filters';
@@ -16,23 +16,21 @@ import { UniverVue3AdapterPlugin } from '@univerjs/ui-adapter-vue3';
 import BidButtonIcon from '~/univer/custom-menu/components/button-icon/BidButtonIcon.vue';
 import AgreementButtonIcon from '~/univer/custom-menu/components/button-icon/AgreementButtonIcon.vue';
 import { addConditionalFormatting } from '~/helpers/conditionalFormatting';
+import type { FWorksheet } from '@univerjs/preset-sheets-core';
 
 const tr = ref<number>(0);
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
-  if (typeof window === 'undefined') {
-    throw new Error('initUniver must be called on the client');
-  }
+  if (typeof window === 'undefined') throw new Error('initUniver must be called on the client');
 
-  const headers = import.meta.server ? useRequestHeaders(["cookie"]) : undefined;
-  const me: any = await $fetch("/api/auth/me", { headers }).catch(() => null);
-  const toast = useToast();
+  const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined;
+  const me: any = await $fetch('/api/auth/me', { headers }).catch(() => null);
 
   const [
-    { createUniver, LocaleType, mergeLocales }, 
-    { UniverSheetsCorePreset }, 
-    SheetsCoreRuRU, SheetsCoreEnUS, 
-    { UniverSheetsDataValidationPreset }, 
+    { createUniver, LocaleType, mergeLocales },
+    { UniverSheetsCorePreset },
+    SheetsCoreRuRU, SheetsCoreEnUS,
+    { UniverSheetsDataValidationPreset },
     SheetsDVEnUS, SheetsDVRuRU,
     { UniverSheetsFilterPreset },
     UniverPresetSheetsFilterEnUS,
@@ -80,28 +78,14 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       UniverSheetsCorePreset({
         container: 'univer',
         ribbonType: 'simple',
-        footer: {
-          menus: false,
-        },
+        footer: { menus: false },
         menu: {
-          'sheet.menu.paste-special': {
-            hidden: true
-          },
-          'sheet.menu.delete': {
-            hidden: true
-          },
-          'sheet.menu.cell-insert': {
-            hidden: true
-          },
-          'sheet.menu.clear-selection': {
-            hidden: true
-          },
-          'sheet.contextMenu.permission': {
-            hidden: true
-          },
-          'sheet.menu.sheet-frozen': {
-            hidden: true
-          }
+          'sheet.menu.paste-special': { hidden: true },
+          'sheet.menu.delete': { hidden: true },
+          'sheet.menu.cell-insert': { hidden: false },
+          'sheet.menu.clear-selection': { hidden: true },
+          'sheet.contextMenu.permission': { hidden: true },
+          'sheet.menu.sheet-frozen': { hidden: true }
         }
       }),
       UniverSheetsDataValidationPreset(),
@@ -110,244 +94,359 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     ],
   });
 
-  univer.registerPlugin(UniverVue3AdapterPlugin)
-  univer.registerPlugin(UniverSheetsCustomMenuPlugin)
+  univer.registerPlugin(UniverVue3AdapterPlugin);
+  univer.registerPlugin(UniverSheetsCustomMenuPlugin);
 
-  univerAPI.registerComponent('BidButtonIcon', BidButtonIcon, { framework: 'vue3' })
-  univerAPI.registerComponent('AgreementButtonIcon', AgreementButtonIcon, { framework: 'vue3' })
+  univerAPI.registerComponent('BidButtonIcon', BidButtonIcon, { framework: 'vue3' });
+  univerAPI.registerComponent('AgreementButtonIcon', AgreementButtonIcon, { framework: 'vue3' });
 
-  const sheets: Record<string, any> = {};
+  // ---------- helpers ----------
+  const lettersToIndex = (s: string): number => {
+    // A->0, Z->25, AA->26, AB->27 ...
+    let n = 0;
+    for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+    return n - 1;
+  };
+
+  const mapValueByCol = (item: TransportAccounting, col: number): any => {
+    switch (col) {
+      case 0: return item.dateOfPickup;
+      case 1: return item.numberOfContainer;
+      case 2: return item.cargo;
+      case 3: return item.typeOfContainer;
+      case 4: return item.dateOfSubmission;
+      case 5: return item.addressOfDelivery;
+      case 6: return item.ourFirm;
+      case 7: return item.client;
+      case 8: return item.formPayAs;
+      case 9: return item.summa;
+      case 10: return item.numberOfBill;
+      case 11: return item.dateOfBill;
+      case 12: return item.datePayment;
+      case 13: return item.contractor;
+      case 14: return item.driver;
+      case 15: return item.formPayHim;
+      case 16: return item.contractorRate;
+      case 17: return item.sumIssued;
+      case 18: return item.numberOfBillAdd;
+      case 19: return item.dateOfPaymentContractor;
+      case 20: return item.manager;
+      case 21: return item.departmentHead;
+      case 22: return item.clientLead;
+      case 23: return item.salesManager;
+      case 24: return item.additionalExpenses;
+      case 25: return item.income;
+      case 26: return item.incomeLearned;
+      case 27: return item.id;
+      default: return '';
+    }
+  };
+
+  const applyRowStyles = (sheet: any, item: any, rowIndex: number) => {
+    const isManager = me?.roleCode === 'ROLE_MANAGER';
+    const isAdminOrBuh = me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH';
+
+    const blocked = new Set<number>();
+    if (isManager && Array.isArray(item?.managerBlockListCell)) {
+      for (const rng of item.managerBlockListCell) {
+        if (!Array.isArray(rng)) continue;
+        if (rng.length === 1 && rng[0]) blocked.add(lettersToIndex(rng[0]));
+        else if (rng.length >= 2 && rng[0] && rng[1]) {
+          const a = lettersToIndex(rng[0]); const b = lettersToIndex(rng[1]);
+          for (let c = a; c <= b; c++) blocked.add(c);
+        }
+      }
+    }
+    for (let col = 0; col < 27; col++) { // exclude ID style
+      let s = 'ar';
+      if ([25, 26].includes(col) || (isManager && blocked.has(col))) s = 'lockedCol';
+      else if (item?.managerBlock && !isAdminOrBuh) s = 'lockedRow';
+      sheet.getRange(rowIndex, col).setValue({ s });
+    }
+  };
+
+  const renderRow = (sheet: any, item: TransportAccounting, rowIndex: number) => {
+    const rowVals = Array.from({ length: 28 }, (_, col) => ({ v: mapValueByCol(item, col) }));
+    sheet.getRange(rowIndex, 0, 1, 28).setValues([rowVals]);
+    applyRowStyles(sheet, item, rowIndex);
+  };
+
+  // ---------- build initial workbook ----------
+  const initialRowIndexMap = new Map<string, Map<number, number>>(); // listName -> (id -> rowIndex)
+  const sheetsDef: Record<string, any> = {};
   let i = 0;
 
   for (const [periodName, items] of Object.entries(records || {})) {
-    const id = `sheet-${++i}`
-    const data = items as TransportAccounting[]
+    const id = `sheet-${++i}`;
+    const data = (items as TransportAccounting[]) ?? [];
     const rowsToAdd = 100;
 
-    const headerRow: Record<number, { v: any, s?: string }> = {}
-    HEADERS.forEach((h, col) => {
-      headerRow[col] = { v: h, s: 'hdr' }
-    })
+    const headerRow: Record<number, { v: any, s?: string }> = {};
+    HEADERS.forEach((h, col) => { headerRow[col] = { v: h, s: 'hdr' }; });
 
-    const cellData: Record<number, Record<number, { v: any, s?: string }>> = { 0: headerRow }
-    const isManager = me?.roleCode === 'ROLE_MANAGER';
-    
+    const cellData: Record<number, Record<number, { v: any, s?: string }>> = { 0: headerRow };
+
+    const rowIndexMap = new Map<number, number>();
     for (let r = 0; r < data.length; r++) {
       const rec = data[r]!;
       const rowCells = await buildRowCells(rec, me);
-      
       cellData[r + 1] = rowCells;
-      
-      if (rec?.managerBlock && me?.roleCode !== "ROLE_ADMIN" && me?.roleCode !== "ROLE_BUH") {
-        [26, 27].push(r + 1);
-      }
+      const recId = Number(rec?.id);
+      if (Number.isFinite(recId)) rowIndexMap.set(recId, r + 1);
     }
+    initialRowIndexMap.set(periodName, rowIndexMap);
 
-    const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27])
+    const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27]);
 
-    const totalRows = data.length + rowsToAdd 
-    tr.value = totalRows
+    const totalRows = data.length + rowsToAdd;
+    tr.value = totalRows;
+
     for (let r = data.length + 1; r < totalRows; r++) {
-      const empty: Record<number, { v: any, s?: string }> = {}
+      const empty: Record<number, { v: any, s?: string }> = {};
       for (let c = 0; c < 28; c++) {
         let style = 'a';
-        if (c === 27) {
-          style = 'id';
-        } else if (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(c)) {
-          style = 'lockedCol';
-        } else if ([4, 25, 26].includes(c)) {
-          style = 'lockedCol';
-        } else if (c === 0) {
-          style = 'ar'
-        }
+        if (c === 27) style = 'id';
+        else if (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(c)) style = 'lockedCol';
+        else if ([4, 25, 26].includes(c)) style = 'lockedCol';
+        else if (c === 0) style = 'ar';
         empty[c] = { v: '', s: style };
-      } 
-      cellData[r] = empty
+      }
+      cellData[r] = empty;
     }
 
-    const { columnData, rowData } = autoFitColumnAndRowData(cellData, 28)
-    sheets[id] = {
-      id, name: periodName, tabColor: '#009999', hidden: 0, 
+    const { columnData, rowData } = autoFitColumnAndRowData(cellData, 28);
+    sheetsDef[id] = {
+      id, name: periodName, tabColor: '#009999', hidden: 0,
       rowCount: totalRows, columnCount: 28, zoomRatio: 1,
       freeze: { startRow: 1, startColumn: 0, ySplit: 1, xSplit: 0 },
       defaultColumnWidth: 120, defaultRowHeight: 28, columnData, rowData,
       cellData, showGridLines: 1, rowHeader: { width: 50, hidden: 0 },
       columnHeader: { height: 28, hidden: 0 }, rightToLeft: 0
-    }
+    };
   }
 
   const parsePeriod = (name: string): number => {
     const m = /^([01]?\d)\.(\d{4})$/.exec(String(name).trim());
     if (!m) return Number.MAX_SAFE_INTEGER;
-    const mm = Number(m[1]);
-    const yyyy = Number(m[2]);
-    return yyyy * 100 + mm;
+    return Number(m[2]) * 100 + Number(m[1]);
   };
-  const order = Object.keys(sheets).sort((a, b) => {
-    const na = sheets[a]?.name ?? "";
-    const nb = sheets[b]?.name ?? "";
+  const order = Object.keys(sheetsDef).sort((a, b) => {
+    const na = sheetsDef[a]?.name ?? '';
+    const nb = sheetsDef[b]?.name ?? '';
     return parsePeriod(na) - parsePeriod(nb);
   });
 
   univerAPI.createWorkbook({
     id: 'workbook-1',
     sheetOrder: order,
-    name: "TransportAccounting",
-    styles: styles,
-    sheets,
-    resources: []
+    name: 'TransportAccounting',
+    styles, sheets: sheetsDef, resources: []
   });
 
-  // Expose API globally for theme and other controls
+  // ---------- expose API & header styling ----------
   try {
-    const { setUniverApi } = await import('~/composables/useUniverApi')
-    setUniverApi(univerAPI)
+    const { setUniverApi } = await import('~/composables/useUniverApi');
+    setUniverApi(univerAPI);
 
-    // Apply initial header style depending on theme
     try {
-      const { useTheme } = await import('~/composables/useTheme')
-      const { withHeaderUnlocked } = await import('~/helpers/univer-protect')
-      const { darkTheme } = useTheme()
-      const isDark = !!darkTheme.value
+      const { useTheme } = await import('~/composables/useTheme');
+      const { darkTheme } = useTheme();
+      const isDark = !!darkTheme.value;
       await withHeaderUnlocked(univerAPI, async () => {
-        const wb = univerAPI.getActiveWorkbook?.()
-        const sheets = wb?.getSheets?.() || []
+        const wb = univerAPI.getActiveWorkbook?.();
+        const sheets = wb?.getSheets?.() || [];
         for (const s of sheets as any[]) {
           for (let col = 0; col < 28; col++) {
-            s.getRange(0, col)?.setValue?.({ s: isDark ? 'hdrDark' : 'hdr' })
+            s.getRange(0, col)?.setValue?.({ s: isDark ? 'hdrDark' : 'hdr' });
           }
         }
-      })
+      });
     } catch {}
   } catch {}
 
-  // Register sheet events (1: user edits → 2: send add/update)
+  // ---------- register UI edit events ----------
   registerUniverEvents(univerAPI);
 
-  // 3: receive data from socket → 4: apply on clients via watch() on store.records
+  // ---------- socket wiring with address-only rendering ----------
   try {
     const store = useSheetStore();
     const { $wsOnMessage } = useNuxtApp();
 
-    // Wire raw socket → store (normalize is inside store.applySocketMessage)
+    // Быстрый доступ к строке по id
+    const rowIndexMapByList = new Map(initialRowIndexMap); // копия, будем дополнять
+    const lastCounts = new Map<string, number>(
+      Object.entries(records || {}).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0])
+    );
+
+    // Батч-очередь на один кадр
+    type QItem = { type: 'create' | 'update'; rec: any };
+    const queue = new Map<string, QItem[]>(); // listName -> items
+    let scheduled = false;
+    const RENDER_ONLY_ACTIVE_SHEET = me?.roleCode === 'ROLE_ADMIN'; // критично для админа
+
+    const flush = () => {
+      scheduled = false;
+      const wb = univerAPI.getActiveWorkbook();
+      if (!wb) return;
+      const activeName = wb.getActiveSheet()?.getSheet()?.getName?.() || '';
+
+      for (const [listName, items] of queue) {
+        queue.delete(listName);
+        if (!items.length) continue;
+
+        if (RENDER_ONLY_ACTIVE_SHEET && listName !== activeName) {
+          // Пропускаем оффскрин-рендер для админа — обновим UI, когда откроет вкладку.
+          continue;
+        }
+
+        const sheet = wb.getSheetByName(listName);
+        if (!sheet) continue;
+
+        const idToRow = rowIndexMapByList.get(listName) || new Map<number, number>();
+        rowIndexMapByList.set(listName, idToRow);
+
+        // Разделим на create & update для корректных индексов
+        const creates: any[] = [];
+        const updates: any[] = [];
+        for (const qi of items) (qi.type === 'create' ? creates : updates).push(qi.rec);
+
+        // updates — адресные
+        if (updates.length) {
+          const arr = store.records[listName] || [];
+          for (const it of updates) {
+            const id = Number(it?.id);
+            let rowIndex = idToRow.get(id);
+            if (!rowIndex) {
+              // fallback: найдём по массиву (редкий случай)
+              const idx = arr.findIndex((r: any) => Number(r?.id) === id);
+              if (idx >= 0) rowIndex = idx + 1;
+            }
+            if (rowIndex) renderRow(sheet, it as TransportAccounting, rowIndex);
+          }
+        }
+
+        // creates — добавляем в конец
+        if (creates.length) {
+          // длина ДО мутации стора (socketHandlers вызываются до splice/push)
+          const baseLen = store.records[listName]?.length ?? (lastCounts.get(listName) ?? 0);
+          let cursor = baseLen;
+          for (const it of creates) {
+            const rowIndex = cursor + 1;
+            renderRow(sheet, it as TransportAccounting, rowIndex);
+            const id = Number(it?.id);
+            if (Number.isFinite(id)) idToRow.set(id, rowIndex);
+            cursor++;
+          }
+          lastCounts.set(listName, Math.max(lastCounts.get(listName) ?? 0, cursor));
+        }
+      }
+    };
+
+    // Полная перерисовка листа (используем для delete)
+    const rerenderSheet = (listName: string) => {
+      const wb = univerAPI.getActiveWorkbook();
+      const sheet = wb?.getSheetByName(listName);
+      if (!sheet) return;
+      const items = store.records[listName] || [];
+      const rows = items.length;
+
+      if (rows > 0) {
+        const matrix = items.map((it: TransportAccounting) =>
+          Array.from({ length: 28 }, (_, col) => ({ v: mapValueByCol(it, col) }))
+        );
+        sheet.getRange(1, 0, rows, 28).setValues(matrix);
+        // стили построчно
+        for (let r = 0; r < rows; r++) applyRowStyles(sheet, items[r], r + 1);
+      }
+
+      // пересобираем карту индексов
+      const idToRow = new Map<number, number>();
+      for (let r = 0; r < rows; r++) {
+        const id = Number(items[r]?.id);
+        if (Number.isFinite(id)) idToRow.set(id, r + 1);
+      }
+      rowIndexMapByList.set(listName, idToRow);
+
+      // очистка хвоста
+      const prev = lastCounts.get(listName) ?? rows;
+      if (prev > rows) {
+        const toClear = prev - rows;
+        const empty = Array.from({ length: toClear }, () =>
+          Array.from({ length: 28 }, () => ({ v: '' }))
+        );
+        sheet.getRange(rows + 1, 0, toClear, 28).setValues(empty);
+      }
+      lastCounts.set(listName, rows);
+    };
+
+    // Сырой сокет → нормализованный стор
     if (typeof $wsOnMessage === 'function') {
       $wsOnMessage((payload: any) => {
-        // Try to infer listName hint from active sheet (fallback)
         const wb = univerAPI.getActiveWorkbook();
         const activeName = wb?.getActiveSheet()?.getSheet()?.getName() || '';
         store.applySocketMessage?.(payload as any, activeName);
       });
     }
 
-    // Column mapping for Univer: index -> value from TransportAccounting
-    const mapValueByCol = (item: TransportAccounting, col: number): any => {
-      switch (col) {
-        case 0: return item.dateOfPickup;
-        case 1: return item.numberOfContainer;
-        case 2: return item.cargo;
-        case 3: return item.typeOfContainer;
-        case 4: return item.dateOfSubmission;
-        case 5: return item.addressOfDelivery;
-        case 6: return item.ourFirm;
-        case 7: return item.client;
-        case 8: return item.formPayAs;
-        case 9: return item.summa;
-        case 10: return item.numberOfBill;
-        case 11: return item.dateOfBill;
-        case 12: return item.datePayment;
-        case 13: return item.contractor;
-        case 14: return item.driver;
-        case 15: return item.formPayHim;
-        case 16: return item.contractorRate;
-        case 17: return item.sumIssued;
-        case 18: return item.numberOfBillAdd;
-        case 19: return item.dateOfPaymentContractor;
-        case 20: return item.manager;
-        case 21: return item.departmentHead;
-        case 22: return item.clientLead;
-        case 23: return item.salesManager;
-        case 24: return item.additionalExpenses;
-        case 25: return item.income;
-        case 26: return item.incomeLearned;
-        case 27: return item.id;
-        default: return '';
-      }
-    };
-
-    // Track previous rendered count per sheet to clear stale rows on delete
-    const lastCounts = new Map<string, number>();
-
-    // Watch per period to update only affected sheet/rows
-    watch(() => store.records, (records) => {
+    // Адресные UI-апдейты ДО мутации стора (socketHandlers вызываются в начале applySocketMessage)
+    store.socketHandlers.push((msg: any) => {
       const wb = univerAPI.getActiveWorkbook();
       if (!wb) return;
 
-      Object.entries(records || {}).forEach(([periodName, items]) => {
-        const sheet = wb.getSheetByName(periodName);
-        if (!sheet) return;
+      // Собираем byList
+      const byList: Record<string, any[]> =
+        msg?.transportAccountingDto?.object ??
+        msg?.transportAccountingDTO?.object ??
+        msg?.object ?? {};
 
-        // Render/refresh rows for actual items
-        items.forEach((item: TransportAccounting, index: number) => {
-          const row = index + 1; // +1 because 0 is header
-          for (let col = 0; col < 28; col++) {
-            const v = mapValueByCol(item, col);
-            sheet.getRange(row, col).setValue({ v });
-          }
+      let dtoArray: any[] | undefined =
+        msg?.transportAccountingDto ?? msg?.transportAccountingDTO;
 
-          // Apply lock styling based on managerBlock and managerBlockListCell
-          const isManager = me?.roleCode === 'ROLE_MANAGER';
-          const isAdminOrBuh = me?.roleCode === "ROLE_ADMIN" || me?.roleCode === "ROLE_BUH";
-
-          const blockedColumns = new Set<number>();
-          if (isManager && item.managerBlockListCell && Array.isArray(item.managerBlockListCell)) {
-            const letterToColumnIndex = (letter: string) => letter.charCodeAt(0) - 'A'.charCodeAt(0);
-            item.managerBlockListCell.forEach((range: string[]) => {
-              if (range.length === 1 && range[0]) {
-                blockedColumns.add(letterToColumnIndex(range[0]));
-              } else if (range.length >= 2 && range[0] && range[1]) {
-                const start = letterToColumnIndex(range[0]);
-                const end = letterToColumnIndex(range[1]);
-                for (let i = start; i <= end; i++) {
-                  blockedColumns.add(i);
-                }
-              }
-            });
-          }
-
-          for (let col = 0; col < 27; col++) { // excluding ID column
-            let style;
-            if ([25, 26].includes(col) || (isManager && blockedColumns.has(col))) {
-              style = 'lockedCol';
-            } else if (item?.managerBlock && !isAdminOrBuh) {
-              style = 'lockedRow';
-            } else {
-              style = 'ar';
-            }
-            sheet.getRange(row, col).setValue({ s: style });
-          }
-        });
-
-        // Clear stale rows if list shrank (e.g., after delete)
-        const prev = lastCounts.get(periodName) ?? 0;
-        const curr = Array.isArray(items) ? items.length : 0;
-        if (prev > curr) {
-          // очищаем только значения, без влияния на стили/валидации
-          for (let row = curr + 1; row <= prev; row++) {
-            for (let col = 0; col < 28; col++) {
-              sheet.getRange(row, col).setValue({ v: '' });
-            }
-          }
+      if (Array.isArray(dtoArray) && dtoArray.length && !Object.keys(byList).length) {
+        // fallback: сгруппировать по listName; если его нет — в активный лист
+        const ln = wb.getActiveSheet()?.getSheet()?.getName?.() || '';
+        for (const it of dtoArray) {
+          const key = it?.listName || ln;
+          (byList[key] ||= []).push(it);
         }
-        lastCounts.set(periodName, curr);
-      });
-    }, { deep: true });
+      }
+
+      for (const [listName, items] of Object.entries(byList)) {
+        if (!items?.length) continue;
+
+        if (msg.type === 'status_delete') {
+          // Перерисуем целиком после того, как стор применит изменения
+          setTimeout(() => rerenderSheet(listName), 0);
+          continue;
+        }
+
+        // Скопим creates/updates и отрисуем единым фреймом
+        const arr = queue.get(listName) || [];
+        for (const it of items) {
+          const type: 'create' | 'update' =
+            msg.type === 'status_create' ? 'create' : 'update';
+          arr.push({ type, rec: it });
+        }
+        queue.set(listName, arr);
+      }
+
+      if (!scheduled) {
+        scheduled = true;
+        // один батч в кадр
+        requestAnimationFrame(flush);
+      }
+    });
   } catch (e) {
-    console.error('[socket/watch] wiring failed:', e);
+    console.error('[socket/handlers] wiring failed:', e);
   }
 
-  await addDataValidation(univerAPI);
-  await addFilters(univerAPI, tr.value)
-  await addConditionalFormatting(univerAPI);
+  // ---------- post-init: validations/filters/CF for ALL sheets; then protect headers ----------
+  const allSheets = univerAPI.getActiveWorkbook()?.getSheets() || [];
+  for (const s of allSheets as FWorksheet[]) {
+    await addDataValidation(univerAPI, s);
+    await addFilters(univerAPI, s);
+    await addConditionalFormatting(univerAPI, s);
+  }
   await lockHeaders(univerAPI);
 
   return univerAPI;
