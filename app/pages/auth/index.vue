@@ -228,7 +228,7 @@ const onConfirmCode = async () => {
   if (res?.operationResult === "OK") {
     user.value = res.object?.user || null;
     
-    try { await $fetch('/api/auth/me') } catch {}
+    try { await $fetch('/api/login/me') } catch {}
 
     const u = useCookie<string | null>('u')
     let confirmed = false

@@ -145,11 +145,7 @@ export const useSheetStore = defineStore("sheet", {
       }
 
       if (msg.type === "status_create") {
-        const created =
-          (byList[targetList] && byList[targetList].length
-            ? byList[targetList]
-            : undefined) ?? (Array.isArray(dtoArray) ? dtoArray : undefined);
-
+        const created = byList[targetList]?.length ? byList[targetList] : undefined;
         if (!created || !created.length) {
           return;
         }
@@ -166,10 +162,7 @@ export const useSheetStore = defineStore("sheet", {
       }
 
       if (msg.type === "status_update") {
-        const list =
-          (byList[targetList] && byList[targetList].length
-            ? byList[targetList]
-            : undefined) ?? (Array.isArray(dtoArray) ? dtoArray : undefined);
+        const list = byList[targetList]?.length ? byList[targetList] : undefined;
         const upd = Array.isArray(list)
           ? list[0]
           : (msg as any).transportAccountingDto?.[0] ??
