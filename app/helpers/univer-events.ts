@@ -288,6 +288,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         console.log('[univer-events] CREATE: sending addRecords', { listName, key, dto });
         requestedRows.add(key); // Mark as in-flight
         try {
+          sheetStore.anchorCreateRow(listName, row)
           await sheetStore.addRecords([dto]);
           console.log('[univer-events] CREATE: request sent, awaiting socket update for row', row);
           // Highlight immediately if not loading (visual feedback)
@@ -364,6 +365,24 @@ export function registerUniverEvents(univerAPI: FUniver) {
       } catch (e) { console.error('Failed to show toast:', e); }
       return;
     }
+
+    // const isAdminOrBuh = me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH'
+    // if (isAdminOrBuh && (col === 25 || col === 26 || col === 27) && row > 0) {
+    //   const newVal = s.getCell(row, col)
+    //   if (toStr(newVal)) {
+    //     await univerAPI.undo();
+    //     try {
+    //       const toast = useToast();
+    //       toast.add({
+    //         title: 'Ячейка заблокирована',
+    //         description: 'Редактирование этой ячейки запрещено для вашей роли.',
+    //         color: 'warning',
+    //         duration: 2500,
+    //       })
+    //     } catch {}  
+    //   }
+    //   return
+    // }
 
     await handleRowChange(row, col);
   });

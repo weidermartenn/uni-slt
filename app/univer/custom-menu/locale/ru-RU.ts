@@ -4,7 +4,7 @@ export default {
         singleButton: 'Одна кнопка'
     },
     bidButton: {
-        button: 'Создать запрос'
+        button: 'Создать заявку'
     },
     agreementButton: {
         button: 'Создать договор'

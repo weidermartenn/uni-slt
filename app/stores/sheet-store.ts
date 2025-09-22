@@ -17,6 +17,7 @@ export const useSheetStore = defineStore("sheet", {
     loading: false,
     error: "" as string | null,
     socketHandlers: [] as Array<(event: SocketEvent) => void>,
+    pendingCreateRows: {} as Record<string, number[]>,
   }),
 
   getters: {
@@ -25,6 +26,13 @@ export const useSheetStore = defineStore("sheet", {
   },
 
   actions: {
+    anchorCreateRow(listName: string, rowIndex0: number) {
+      (this.pendingCreateRows[listName] ||= []).push(rowIndex0); // 0-based индекс строки (0 — заголовок)
+    },
+    takeAnchoredCreateRow(listName: string): number | undefined {
+      const q = this.pendingCreateRows[listName];
+      return q && q.length ? q.shift() : undefined;
+    },
     async fetchRecords() {
       this.loading = true;
       this.error = "";

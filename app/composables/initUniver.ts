@@ -331,15 +331,16 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
           const baseLen = store.records[listName]?.length ?? (lastCounts.get(listName) ?? 0);
           let cursor = baseLen;
           for (const it of creates) {
-            const rowIndex = cursor + 1;
+            const anchored = store.takeAnchoredCreateRow(listName);
+            const rowIndex = (typeof anchored === 'number' && anchored >= 1) ? anchored : (cursor + 1)                                     
             renderRow(sheet, it as TransportAccounting, rowIndex);
             const id = Number(it?.id);
             if (Number.isFinite(id)) idToRow.set(id, rowIndex);
-            cursor++;
+            if (!(typeof anchored === 'number' && anchored >= 1)) cursor++;
           }
           lastCounts.set(listName, Math.max(lastCounts.get(listName) ?? 0, cursor));
         }
-      }
+      }                 
     };
 
     // Полная перерисовка листа (используем для delete)
