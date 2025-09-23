@@ -1,12 +1,12 @@
 const postUserLoginCode = (login: string) => {
-    return $fetch('/api/login/login', {
+    return $fetch('/api/authorization/login', {
         method: 'POST',
         body: { login }
     })
 }
 
 const postUserConfirmCode = (login: string, confirmToken: string) => {
-    return $fetch('/api/login/login', {
+    return $fetch('/api/authorization/login', {
         method: 'POST',
         body: { login, confirmToken }
     })

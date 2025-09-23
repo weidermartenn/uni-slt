@@ -1,5 +1,4 @@
-import { ref } from 'vue'
-import type { FUniver } from '@univerjs/presets'
+import type { FUniver } from '@univerjs/core/facade'
 
 // Returns rendered ref and an unsubscribe function to be cleaned up by the caller
 export function getLifeCycleState(api: FUniver) {

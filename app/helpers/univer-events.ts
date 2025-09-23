@@ -1,4 +1,5 @@
-import type { FUniver } from '@univerjs/presets';
+import type { CellValue, IObjectMatrixPrimitiveType } from '@univerjs/core';
+import type { FUniver } from '@univerjs/core/facade'
 import { useSheetStore } from '~/stores/sheet-store'; // Assuming this is a Pinia store or similar for reactivityAssuming a composable for toast notifications
 
 // Centralized Univer event registrations
@@ -18,7 +19,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const getMe = async () => {
     if (cachedMe !== undefined) return cachedMe;
     const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined;
-    cachedMe = await $fetch('/api/auth/me', { headers }).catch(() => null);
+    cachedMe = await $fetch('/api/authorization/me', { headers }).catch(() => null);
     return cachedMe;
   };
 
@@ -131,7 +132,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     try {
       const date = new Date(str);
       if (!isNaN(date.getTime())) {
-        return date.toISOString().split('T')[0];
+        return date.toISOString().split('T')[0] || null;
       }
     } catch (e) {
       // Ignore parsing errors
@@ -496,50 +497,40 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   // Event listener for after clipboard paste has completed
   const offPasted = univerAPI.addEvent(univerAPI.Event.ClipboardPasted, async (params: any) => {
-    const wb = univerAPI.getActiveWorkbook();
-    const aws = wb?.getActiveSheet();
-    const s = aws?.getSheet();
-    if (!wb || !aws || !s) {
-      console.warn('[univer-events] ClipboardPasted: No active workbook or sheet.');
-      batchPasteInProgress = false; // Ensure flag is reset even on early exit
+  const wb = univerAPI.getActiveWorkbook();
+  const aws = wb?.getActiveSheet();
+  const s = aws?.getSheet();
+  if (!wb || !aws || !s) {
+    console.warn('[univer-events] ClipboardPasted: No active workbook or sheet.');
+    batchPasteInProgress = false; // гарантия снятия флага
+    return;
+  }
+
+  try {
+    // 1) Выясняем фактический прямоугольник вставки
+    const activeRange = aws.getSelection()?.getActiveRange?.()?.getRange();
+    if (!activeRange) {
+      console.warn('[univer-events] ClipboardPasted: No active range after paste.');
       return;
     }
 
-    try {
-      // Determine the actual pasted rectangle from the active selection *after* paste
-      const activeRange = aws.getSelection()?.getActiveRange?.()?.getRange();
-      if (!activeRange) {
-        console.warn('[univer-events] ClipboardPasted: No active range after paste.');
-        return;
-      }
+    const startRow = activeRange.startRow;
+    const endRow = activeRange.endRow;
+    const startCol = activeRange.startColumn;
+    const endCol = activeRange.endColumn;
 
-      const startRow = activeRange.startRow;
-      const endRow = activeRange.endRow;
-      const startCol = activeRange.startColumn;
-      const endCol = activeRange.endColumn;
+    const listName = s.getName();
+    const sheetStore = useSheetStore();
 
-      const listName = s.getName();
-      const sheetStore = useSheetStore();
-
-      // Prevent paste into dynamically locked rows for managers
-      const me = await getMe();
-      const isManager = me?.roleCode === 'ROLE_MANAGER';
-      if (isManager) {
-        for (let r = Math.max(1, startRow); r <= endRow; r++) { // Iterate from row 1 (skipping header)
-          // Simplified check: if any cell in the pasted row is locked, prevent paste for the whole row
-          // This check is very broad, consider if only the *actually pasted* cells need to be checked
-          // For now, checking column 0 for a general row lock, then checking relevant pasted columns.
-          let rowIsLocked = false;
-          for (let c = startCol; c <= endCol; c++) {
-            if (isCellLockedForManager(listName, r, c, sheetStore)) {
-              rowIsLocked = true;
-              break;
-            }
-          }
-
-          if (rowIsLocked) {
+    // 2) Блокируем вставку в запрещённые для менеджера клетки
+    const me = await getMe();
+    const isManager = me?.roleCode === 'ROLE_MANAGER';
+    if (isManager) {
+      for (let r = Math.max(1, startRow); r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+          if (isCellLockedForManager(listName, r, c, sheetStore)) {
             console.warn('[univer-events] Manager attempted to paste into a locked row/cell:', { listName, row: r, startCol, endCol });
-            await univerAPI.undo(); // Undo the entire paste operation
+            await univerAPI.undo();
             try {
               const toast = useToast();
               toast.add({
@@ -549,112 +540,115 @@ export function registerUniverEvents(univerAPI: FUniver) {
                 duration: 3500,
               });
             } catch (e) { console.error('Failed to show toast:', e); }
-            return; // Abort all further processing
+            return;
           }
         }
       }
+    }
 
-      // Re-normalize pasted cells in-place on the UI after paste (as BeforePaste might not catch all cases or Univer might re-render)
-      const numericCols = new Set([9, 16, 17, 24, 25, 26]);
+    // 3) Повторная нормализация уже вставленного — прямо в таблице
+    // (если BeforePaste что-то пропустил или Univer перезачитал данные)
+    const numericCols = new Set([9, 16, 17, 24, 25, 26]); // сумма/ставки/доходы и т.п.
 
-      // Iterate over the pasted range, starting from row 1 (skipping header if paste started there)
-      const actualStartRow = Math.max(1, startRow);
-      const rowsToProcess = endRow - actualStartRow + 1;
-      const colsToProcess = endCol - startCol + 1;
+    const actualStartRow = Math.max(1, startRow); // пропускаем заголовок
+    const rowsToProcess = endRow - actualStartRow + 1;
+    const colsToProcess = endCol - startCol + 1;
 
-      if (rowsToProcess > 0 && colsToProcess > 0) {
-        const block = aws.getRange(actualStartRow, startCol, rowsToProcess, colsToProcess);
-        const values = block.getValues(); // Get current values from the sheet
+    if (rowsToProcess > 0 && colsToProcess > 0) {
+      const block = aws.getRange(actualStartRow, startCol, rowsToProcess, colsToProcess);
 
-        for (let r = 0; r < rowsToProcess; r++) {
-          const rowValues = values[r];
-          if (!rowValues) continue;
-          for (let c = 0; c < colsToProcess; c++) {
-            const absCol = startCol + c;
-            let cellValue = rowValues[c]; // Get the value that was actually pasted/is in the sheet now
+      // Univer возвращает Nullable<CellValue>[][], а setValues не любит undefined.
+      const rawValues = block.getValues() as (CellValue | null | undefined)[][];
+      const changes: IObjectMatrixPrimitiveType<CellValue> = {};
+      let changedSomething = false;
 
-            if (cellValue == null) continue;
+      for (let r = 0; r < rowsToProcess; r++) {
+        const row = rawValues[r] ?? [];
+        for (let c = 0; c < colsToProcess; c++) {
+          const absCol = startCol + c;
+          const v = row[c];
+          if (v == null) continue; // не трогаем пустые — избежим массовой записи ''
 
-            const originalStr = toStr(cellValue); // Get string representation for comparison
+          const originalStr = toStr(v);
+          let next: string | null = null;
 
-            if (dateCols.has(absCol)) {
-              const normalizedDate = normalizeDateInput(originalStr);
-              if (normalizedDate && originalStr !== normalizedDate) {
-                rowValues[c] = { v: normalizedDate }; // Update with normalized date object
-              }
-            } else if (numericCols.has(absCol)) {
-              const normalizedNumber = normalizeNumberStr(originalStr);
-              if (originalStr !== normalizedNumber) {
-                rowValues[c] = { v: normalizedNumber }; // Update with normalized number object
-              }
+          if (dateCols.has(absCol)) {
+            const normalizedDate = normalizeDateInput(originalStr);
+            if (normalizedDate && normalizedDate !== originalStr) {
+              next = normalizedDate;
+            }
+          } else if (numericCols.has(absCol)) {
+            const normalizedNumber = normalizeNumberStr(originalStr);
+            if (normalizedNumber !== originalStr) {
+              next = normalizedNumber;
             }
           }
-        }
-        // Set values back to the sheet only if changes were made
-        block.setValues(values); // This will update the UI with normalized values
-      }
 
-      // Collect rows to create/update
-      const createDtos: any[] = [];
-      const updateDtos: any[] = [];
-
-      for (let r = actualStartRow; r <= endRow; r++) {
-        const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []; // Read full row for DTO
-        const idStr = toStr(rowVals[27]);
-
-        // Check if the row has any data in columns 0-26 (excluding ID column for "hasData" check for new rows)
-        let hasData = false;
-        for (let c = 0; c <= 26; c++) {
-          if (toStr(rowVals[c])) {
-            hasData = true;
-            break;
-          }
-        }
-
-        if (!hasData && !idStr) { // If no data and no ID, skip this row (likely an empty row in pasted range)
-          continue;
-        }
-
-        if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
-          // Existing record: update
-          const idNum = Number(idStr);
-          const updateDto = buildSR(rowVals, listName, idNum);
-          updateDtos.push(updateDto);
-        } else if (hasData) {
-          // New record: create
-          const createDto = buildSR(rowVals, listName);
-          createDtos.push(createDto);
-        }
-      }
-
-      if (createDtos.length) {
-        console.log('[univer-events] PASTE: Sending addRecords batch', { count: createDtos.length, createDtos });
-        await sheetStore.addRecords(createDtos);
-      }
-
-      if (updateDtos.length) {
-        console.log('[univer-events] PASTE: Sending updateRecords batch', { count: updateDtos.length, updateDtos });
-        await sheetStore.updateRecords(updateDtos);
-      }
-
-      if (createDtos.length || updateDtos.length) {
-        // Highlight all affected rows briefly after processing
-        for (let r = actualStartRow; r <= endRow; r++) {
-          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
-          let hasDataAfterPaste = false;
-          for (let c = 0; c <= 26; c++) { if (toStr(rowVals[c])) { hasDataAfterPaste = true; break; } }
-          if (hasDataAfterPaste || toStr(rowVals[27])) { // Highlight if it has data or an ID
-            highlightRow(aws, r);
+          if (next != null) {
+            (changes[r] ??= {})[c] = next as CellValue; // пишем только то, что реально поменяли
+            changedSomething = true;
           }
         }
       }
-    } catch (e) {
-      console.error('[univer-events] paste handler failed:', e);
-      // Optionally show a generic error toast
-    } finally {
-      batchPasteInProgress = false; // Reset flag after paste operation completes or fails
+
+      if (changedSomething) {
+        block.setValues(changes); // разрежённая матрица: без undefined и без перезаписи пустых
+        console.log('[univer-events] ClipboardPasted: in-place normalization applied.');
+      }
     }
-  });
+
+    // 4) Готовим батчи на создание/обновление
+    const createDtos: any[] = [];
+    const updateDtos: any[] = [];
+
+    for (let r = Math.max(1, startRow); r <= endRow; r++) {
+      const rowVals = (aws.getRange(r, 0, 1, 28).getValues()?.[0] as (CellValue | null | undefined)[]) ?? [];
+      const idStr = toStr(rowVals[27]); // ID в 28-м столбце (индекс 27)
+
+      // Есть ли данные в 0..26 (кроме ID)
+      let hasData = false;
+      for (let c = 0; c <= 26; c++) {
+        if (toStr(rowVals[c])) { hasData = true; break; }
+      }
+      if (!hasData && !idStr) continue; // пустая строка — пропускаем
+
+      if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
+        const idNum = Number(idStr);
+        const updateDto = buildSR(rowVals as any[], listName, idNum);
+        updateDtos.push(updateDto);
+      } else if (hasData) {
+        const createDto = buildSR(rowVals as any[], listName);
+        createDtos.push(createDto);
+      }
+    }
+
+    if (createDtos.length) {
+      console.log('[univer-events] PASTE: Sending addRecords batch', { count: createDtos.length });
+      await sheetStore.addRecords(createDtos);
+    }
+    if (updateDtos.length) {
+      console.log('[univer-events] PASTE: Sending updateRecords batch', { count: updateDtos.length });
+      await sheetStore.updateRecords(updateDtos);
+    }
+
+    // 5) Подсветка затронутых строк — чуть-чуть «допамина» UX
+    if (createDtos.length || updateDtos.length) {
+      for (let r = Math.max(1, startRow); r <= endRow; r++) {
+        const rowVals = (aws.getRange(r, 0, 1, 28).getValues()?.[0] as (CellValue | null | undefined)[]) ?? [];
+        let hasDataAfterPaste = false;
+        for (let c = 0; c <= 26; c++) { if (toStr(rowVals[c])) { hasDataAfterPaste = true; break; } }
+        if (hasDataAfterPaste || toStr(rowVals[27])) {
+          highlightRow(aws, r);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[univer-events] paste handler failed:', e);
+    // тут по желанию можно показать общий тост об ошибке
+  } finally {
+    batchPasteInProgress = false; // флаг снимаем всегда; иначе последующие редактирования «замёрзнут»
+  }
+});
 
   // Return disposer to allow cleanup by caller if needed
   return () => {

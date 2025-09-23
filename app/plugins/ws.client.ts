@@ -1,7 +1,7 @@
 export default defineNuxtPlugin(async (nuxtApp) => {
   // узнаём пользователя/токен
   const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined;
-  const me: any = await $fetch('/api/auth/me', { headers }).catch(() => null);
+  const me: any = await $fetch('/api/authorization/me', { headers }).catch(() => null);
 
   const table  = 'transportAccounting';
   const userId = me?.id

@@ -1,6 +1,4 @@
-import { ref, watch } from 'vue'
 import { useUniverApi } from '~/composables/useUniverApi'
-import { useLocalStorage, usePreferredDark } from '@vueuse/core'
 
 // Use system preference as a sensible default
 const prefersDark = usePreferredDark()

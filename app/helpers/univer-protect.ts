@@ -1,5 +1,4 @@
-import type { FUniver } from "@univerjs/presets";
-import type { FWorksheet } from "@univerjs/presets/lib/types/preset-sheets-core/index.js";
+import type { FUniver } from "@univerjs/core/facade";
 
 // Map sheetId -> permissionId for header protections
 const headerProtectionMap = new Map<string, string>();

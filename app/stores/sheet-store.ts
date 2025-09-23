@@ -40,7 +40,7 @@ export const useSheetStore = defineStore("sheet", {
         const headers = import.meta.server
           ? useRequestHeaders(["cookie"])
           : undefined;
-        const me = await $fetch("/api/auth/me", { headers });
+        const me = await $fetch("/api/authorization/me", { headers });
 
         let path = "";
         if (me?.roleCode === "ROLE_ADMIN" || me?.roleCode === "ROLE_BUH") {

@@ -1,5 +1,4 @@
-import type { FUniver } from '@univerjs/presets';
-import { ref } from 'vue';
+import type { FUniver } from '@univerjs/core/facade';
 
 const univerApiRef = ref<FUniver | null>(null);
 

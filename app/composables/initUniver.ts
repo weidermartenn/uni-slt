@@ -1,6 +1,6 @@
-import type { FUniver } from '@univerjs/presets';
+import type { FUniver } from '@univerjs/core/facade';
+import('@univerjs/network/facade');
 import type { TransportAccounting } from '~/entities/TransportAccountingDto/types';
-import { ref } from 'vue';
 import { useNuxtApp } from '#app';
 import { autoFitColumnAndRowData } from '~/helpers/autoFit';
 import { buildRowCells } from '~/helpers/build-rows';
@@ -24,7 +24,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   if (typeof window === 'undefined') throw new Error('initUniver must be called on the client');
 
   const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined;
-  const me: any = await $fetch('/api/auth/me', { headers }).catch(() => null);
+  const me: any = await $fetch('/api/authorization/me', { headers }).catch(() => null);
 
   const [
     { createUniver, LocaleType, mergeLocales },
@@ -53,8 +53,6 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     import('@univerjs/preset-sheets-conditional-formatting/locales/en-US'),
     import('@univerjs/preset-sheets-conditional-formatting/locales/ru-RU'),
   ]);
-
-  await import('@univerjs/network/facade');
   await import('@univerjs/preset-sheets-filter/lib/index.css');
   await import('@univerjs/preset-sheets-conditional-formatting/lib/index.css');
 

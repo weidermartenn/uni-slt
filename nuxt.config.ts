@@ -1,6 +1,5 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
-  compatibilityDate: '2025-07-15',
   devtools: { enabled: false },
   modules: ['@nuxt/ui', '@pinia/nuxt', '@vueuse/nuxt'],
   css: [
@@ -18,6 +17,9 @@ export default defineNuxtConfig({
   experimental: {
     decorators: true
   },
+  build: {
+    transpile: [/^@univerjs\//]
+  },
   vite: {
     esbuild: {
       tsconfigRaw: {
@@ -26,8 +28,18 @@ export default defineNuxtConfig({
         }
       }
     },
+    resolve: { 
+      dedupe: ['vue', '@vue/shared', '@vue/runtime-core', '@vue/runtime-dom'],
+    },
     build: {
       sourcemap: false, cssMinify: true,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vue-vendor': ['vue', '@vue/shared', '@vue/runtime-core', '@vue/runtime-dom'],
+          }
+        }
+      }
       // chunkSizeWarningLimit: 2000,
       // rollupOptions: {
       //   output: {
@@ -41,6 +53,9 @@ export default defineNuxtConfig({
       //     }
       //   }
       // }
+    },
+    optimizeDeps: {
+      include: ['vue', '@vue/shared', '@vue/runtime-dom', '@vue/runtime-core'],
     },
     css: {
       devSourcemap: false

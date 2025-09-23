@@ -1,5 +1,3 @@
-import { ref, computed, nextTick, vModelCheckbox } from "vue";
-
 export function useOtpInput(length = 4) {
   const code = ref<string[]>(Array.from({ length }, () => ""));
   const inputs = ref<any[]>([]);

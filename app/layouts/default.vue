@@ -115,7 +115,7 @@ const headers = import.meta.server ? useRequestHeaders(["cookie"]) : undefined;
 const { data: me } = await useFetch<{
   confirmed?: boolean;
   roleCode?: string;
-} | null>("/api/auth/me", { headers });
+} | null>("/api/authorization/me", { headers });
 
 const role = computed(() => me.value?.roleCode);
 

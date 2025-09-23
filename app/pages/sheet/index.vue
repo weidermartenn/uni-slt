@@ -32,8 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import type { FUniver } from '@univerjs/presets';
-import { nextTick, reactive, ref, watch, onMounted } from 'vue';
+import type { FUniver } from '@univerjs/core/facade';
 import { useEmployeeStore } from '~/stores/employee-store';
 import { useSheetStore } from '~/stores/sheet-store';
 
@@ -63,7 +62,9 @@ function getSelectionData() {
   if (!ws || !ar) return null;
 
   // univer возвращает 0-based индексы; 0 — это строка заголовков
+  // @ts-ignore
   const start0 = Math.max(1, (ar?._range?.startRow ?? 1));
+  // @ts-ignore
   const end0 = Math.max(1, (ar?._range?.endRow ?? 1));
 
   // Преобразуем в 1-based для адресного диапазона

@@ -1,4 +1,4 @@
-import type { FUniver } from "@univerjs/presets";
+import type { FUniver } from "@univerjs/core/facade";
 import type { FWorksheet } from "@univerjs/presets/lib/types/preset-sheets-core/index.js";
 
 export async function addFilters(api: FUniver, sheet: FWorksheet) {

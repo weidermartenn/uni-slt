@@ -1,4 +1,5 @@
-import { FUniver, BorderType, BorderStyleTypes } from "@univerjs/presets";
+import { BorderType, BorderStyleTypes } from "@univerjs/core";
+import type { FUniver } from "@univerjs/core/facade";
 import type { FWorksheet } from "@univerjs/presets/lib/types/preset-sheets-core/index.js";
 export async function addConditionalFormatting(api: FUniver, sheet: FWorksheet) {
   const a1 = 'B2:B1000';

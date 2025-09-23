@@ -1,7 +1,7 @@
-import { WrapStrategy, type FUniver } from "@univerjs/presets";
+import { WrapStrategy } from "@univerjs/core";
+import type { FUniver } from "@univerjs/core/facade";
 import type { FWorksheet } from "@univerjs/presets/lib/types/preset-sheets-core/index.js";
 import { useEmployeeStore } from "~/stores/employee-store";
-import { useSheetStore } from "~/stores/sheet-store";
 import { useValidationStore } from "~/stores/validation-store";
 
 export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
