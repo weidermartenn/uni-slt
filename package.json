@@ -26,6 +26,10 @@
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
-    "@iconify-json/lucide": "^1.2.68"
+    "@iconify-json/lucide": "^1.2.68",
+    "oxc-parser": "^0.92.0"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "4.6.1"
   }
 }
