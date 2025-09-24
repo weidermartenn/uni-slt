@@ -12,7 +12,7 @@ export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
     await validationStore.fetchCompaniesNames()
     await employeeStore.fetchEmployees()
 
-    const options = ['С НДС', 'БЕЗ НДС']
+    const options = ['С НДС', 'БЕЗ НДС', 'НДС 0', 'НАЛ']
 
     const firmR = sheet?.getRange('G2:G1000');
     const firmRule = api.newDataValidation() 

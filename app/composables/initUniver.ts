@@ -205,7 +205,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         let style = 'a';
         if (c === 27) style = 'id';
         else if (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(c)) style = 'lockedCol';
-        else if ([4, 25, 26].includes(c)) style = 'lockedCol';
+        else if ([25, 26].includes(c)) style = 'lockedCol';
         else if (c === 0) style = 'ar';
         empty[c] = { v: '', s: style };
       }
