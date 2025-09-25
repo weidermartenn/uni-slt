@@ -246,11 +246,6 @@ const onConfirmCode = async () => {
     } finally {
       isRouting.value = false;
     }
-    toast.add({
-      title: "Успешно",
-      color: "success",
-      icon: "i-lucide-check",
-    });
   }
 };
 

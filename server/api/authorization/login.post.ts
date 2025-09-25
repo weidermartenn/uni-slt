@@ -36,7 +36,7 @@ export default defineEventHandler(async (ev) => {
         
         if (token) {
             setCookie(ev, 'access_token', token, {
-                httpOnly: true, sameSite: 'lax', path: '/',
+                httpOnly: false, sameSite: 'lax', path: '/',
                 secure: process.env.NODE_ENV === 'production',
                 maxAge: 60 * 60 * 24 * 30 // 30 days
             })
@@ -45,7 +45,7 @@ export default defineEventHandler(async (ev) => {
         if (user) {
             const minimal = { id: user.id, confirmed: user.confirmed, roleCode: user.role?.code ?? null, token: token }
             setCookie(ev, 'u', Buffer.from(JSON.stringify(minimal)).toString('base64'), {
-                httpOnly: true, sameSite: 'lax', path: '/',
+                httpOnly: false, sameSite: 'lax', path: '/',
                 secure: process.env.NODE_ENV === 'production',
                 maxAge: 60 * 60 * 24 * 30 // 30 days
             })
