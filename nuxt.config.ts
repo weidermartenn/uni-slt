@@ -8,7 +8,7 @@ export default defineNuxtConfig({
     '@univerjs/sheets-ui/lib/index.css',
     '@univerjs/preset-sheets-data-validation/lib/index.css',
   ],
-  ssr: true,
+  ssr: false,
   nitro: {
     sourceMap: false,
     experimental: {
