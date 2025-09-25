@@ -135,7 +135,22 @@ const visibleItems = computed(() =>
 );
 
 const logout = async () => {
+  const accessToken = useCookie("access_token", {
+    path: "/",
+    sameSite: "lax",
+    encode: (value: string) => value,
+  });
+  const userCookie = useCookie("u", {
+    path: "/",
+    sameSite: "lax",
+    encode: (value: string) => value,
+  });
+
+  accessToken.value = null;
+  userCookie.value = null;
+
   await $fetch("/api/authorization/logout", { method: "POST" });
+  await refreshNuxtData("authorization-me");
   await navigateTo("/auth");
 };
 </script>

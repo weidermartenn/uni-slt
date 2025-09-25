@@ -226,16 +226,37 @@ const onConfirmCode = async () => {
 
   const res: any = await postUserConfirmCode(clearPhone.value, codeValue.value);
   if (res?.operationResult === "OK") {
-    user.value = res.object?.user || null;
-    
-    try { await $fetch('/api/authorization/me') } catch {}
+    const confirmedUser = res.object?.user || null;
 
-    const confirmed = !!res?.object?.user?.confirmed
+    const token = res.object?.jwtToken as string | undefined;
 
-    isRouting.value = true
+    const minimalUser = {
+      id: confirmedUser.id ?? null,
+      confirmed: !!confirmedUser.confirmed,
+      roleCode: confirmedUser.role?.code ?? null,
+      token: token ?? null,
+    };
+
+    const accessToken = useCookie('access_token', {
+      path: '/',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 30,
+      encode: (value: string) => value,
+    });
+    accessToken.value = token ?? null;
+
+    const userCookie = useCookie('u', {
+      path: '/',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 30,
+      encode: (value: string) => value,
+    });
+    userCookie.value = btoa(JSON.stringify(minimalUser));
+
+    isRouting.value = true;
 
     try {
-      return await navigateTo(confirmed ? "/" : "/auth", { replace: true });
+      return await navigateTo('/', { replace: true });
     } finally {
       isRouting.value = false;
     }

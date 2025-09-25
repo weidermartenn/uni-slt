@@ -1,18 +1,19 @@
-const postUserLoginCode = (login: string) => {
-    return $fetch('/api/authorization/login', {
-        method: 'POST',
-        body: { login }
-    })
-}
+const postUserLoginCode = async (login: string) => {
+  const { public: { kingsApiBase } } = useRuntimeConfig();
 
-const postUserConfirmCode = (login: string, confirmToken: string) => {
-    return $fetch('/api/authorization/login', {
-        method: 'POST',
-        body: { login, confirmToken }
-    })
-}
+  return await $fetch(`${kingsApiBase}/user/loginByCode`, {
+    method: "POST",
+    body: { login },
+  });
+};
 
-export {
-    postUserLoginCode,
-    postUserConfirmCode
-}
+const postUserConfirmCode = async (login: string, confirmToken: string) => {
+  const { public: { kingsApiBase } } = useRuntimeConfig();
+
+  return await $fetch(`${kingsApiBase}/user/loginByCodeConfirmation`, {
+    method: "POST",
+    body: { login, confirmToken },
+  });
+};
+
+export { postUserLoginCode, postUserConfirmCode };
