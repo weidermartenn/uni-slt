@@ -230,19 +230,12 @@ const onConfirmCode = async () => {
     
     try { await $fetch('/api/authorization/me') } catch {}
 
-    const u = useCookie<string | null>('u')
-    let confirmed = false
-
-    if (u.value) {
-      try {
-        confirmed = !!JSON.parse(atob(u.value)).confirmed 
-      } catch {}
-    }
+    const confirmed = !!res?.object?.user?.confirmed
 
     isRouting.value = true
 
     try {
-      return await navigateTo(confirmed ? "/" : "/auth", { replace: true, external: true });
+      return await navigateTo(confirmed ? "/" : "/auth", { replace: true });
     } finally {
       isRouting.value = false;
     }

@@ -33,11 +33,14 @@ export default defineEventHandler(async (ev) => {
         const token = res?.object?.jwtToken
         // @ts-ignore
         const user = res?.object?.user 
+
+        const isHttps = getRequestHeader(ev, 'x-forwarded-proto') === 'https' ||
+        (ev.node.req as any).socket?.enctypted === true
         
         if (token) {
             setCookie(ev, 'access_token', token, {
-                httpOnly: false, sameSite: 'lax', path: '/',
-                secure: process.env.NODE_ENV === 'production',
+                httpOnly: true, sameSite: 'lax', path: '/',
+                secure: isHttps,
                 maxAge: 60 * 60 * 24 * 30 // 30 days
             })
         }
@@ -46,7 +49,7 @@ export default defineEventHandler(async (ev) => {
             const minimal = { id: user.id, confirmed: user.confirmed, roleCode: user.role?.code ?? null, token: token }
             setCookie(ev, 'u', Buffer.from(JSON.stringify(minimal)).toString('base64'), {
                 httpOnly: false, sameSite: 'lax', path: '/',
-                secure: process.env.NODE_ENV === 'production',
+                secure: isHttps,
                 maxAge: 60 * 60 * 24 * 30 // 30 days
             })
         }
