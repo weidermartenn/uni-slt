@@ -17,7 +17,7 @@
 <script setup lang="ts">
 useHead({ title: 'СЛТ Личный кабинет' });
 definePageMeta({
-    layout: 'default'
+    layout: 'default',
 })
 </script>
 

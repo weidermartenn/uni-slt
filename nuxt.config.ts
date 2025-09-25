@@ -8,11 +8,19 @@ export default defineNuxtConfig({
     '@univerjs/sheets-ui/lib/index.css',
     '@univerjs/preset-sheets-data-validation/lib/index.css',
   ],
+  routeRules: {
+    '/': { prerender: true },
+    '/auth': { prerender: true },
+    '/sheet': { prerender: true },
+  },
   ssr: false,
   nitro: {
     sourceMap: false,
     experimental: {
       websocket: true
+    },
+    prerender: {
+      crawlLinks: true
     }
   },
   experimental: {
