@@ -144,7 +144,6 @@ const logout = async () => {
   accessToken.value = null;
   userCookie.value = null;
 
-  await $fetch("/api/authorization/logout", { method: "POST" });
   await refreshNuxtData("authorization-me");
   await navigateTo("/auth");
 };

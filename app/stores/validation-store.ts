@@ -1,4 +1,18 @@
 import { defineStore } from "pinia"
+import { getUser } from "~/helpers/getUser";
+
+const { public: { sltApiBase } } = useRuntimeConfig();
+function authHeaders(extra?: HeadersInit): HeadersInit {
+  const u = getUser?.();
+  const token = u?.token
+  const base: HeadersInit = {
+    Accept: "application/json",
+    "Content-Type": "application/json"
+  };
+  if (token) (base as Record<string, string>).Authorization = `Bearer ${token}`
+
+  return { ...base, ...(extra || {}) }
+}
 
 export const useValidationStore = defineStore('validation', {
     state: () =>({
@@ -13,8 +27,7 @@ export const useValidationStore = defineStore('validation', {
             this.loading = true
             this.error = ""
             try {
-                const headers = import.meta.server ? useRequestHeaders(["cookie"]) : undefined
-                const data = await $fetch('/api/company/names', { headers })
+                const data = await $fetch(`${sltApiBase}/company/nameList`, { headers: authHeaders() });
                 // @ts-ignore
                 const names = data.object as string[] 
                 this.companies = names

@@ -5,7 +5,6 @@ import { useEmployeeStore } from "~/stores/employee-store";
 import { useValidationStore } from "~/stores/validation-store";
 
 export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
-
     const validationStore = useValidationStore()
     const employeeStore = useEmployeeStore()
 
@@ -24,23 +23,22 @@ export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
         .build();
 
     firmR?.setDataValidation(firmRule);
-
     firmR?.setWrapStrategy(WrapStrategy.CLIP)
 
     // Date validation and display format for A, E, L, T columns
     const applyDateValidation = (a1: string) => {
-      const range = sheet?.getRange(a1)
-      if (!range) return
-      const rule = api
-        .newDataValidation()
-        .requireDateBetween(new Date('1900-01-01'), new Date('2100-01-01'))
-        .setOptions({
-          showErrorMessage: true,
-          error: 'Введите дату в формате YYYY-MM-DD',
-        })
-        .build()
-      range.setDataValidation(rule)
-      range.setHorizontalAlignment('left')
+        const range = sheet?.getRange(a1)
+        if (!range) return
+        const rule = api
+            .newDataValidation()
+            .requireDateBetween(new Date('1900-01-01'), new Date('2100-01-01'))
+            .setOptions({
+                showErrorMessage: true,
+                error: 'Введите дату в формате YYYY-MM-DD',
+            })
+            .build()
+        range.setDataValidation(rule)
+        range.setHorizontalAlignment('left')
     }
 
     applyDateValidation('A2:A1000')
@@ -50,17 +48,17 @@ export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
     applyDateValidation('T2:T1000')
 
     const applyOptionValidation = (a1: string) => {
-      const range = sheet?.getRange(a1)
-      if (!range) return 
-      const rule = api.newDataValidation() 
-        .requireValueInList(options)
-        .setOptions({
-          showErrorMessage: true,
-          error: 'Выберите один из вариантов',
-        })
-        .build();
-      range.setDataValidation(rule);
-      range.setHorizontalAlignment('left')
+        const range = sheet?.getRange(a1)
+        if (!range) return 
+        const rule = api.newDataValidation() 
+            .requireValueInList(options)
+            .setOptions({
+                showErrorMessage: true,
+                error: 'Выберите один из вариантов',
+            })
+            .build();
+        range.setDataValidation(rule);
+        range.setHorizontalAlignment('left')
     }
 
     applyOptionValidation('I2:I1000')
@@ -68,8 +66,20 @@ export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
 
     const managerR = sheet?.getRange('U2:X1000');
 
+    const names = computed(() => {
+        return employeeStore.employees
+            .filter(e => e != null) // Filter out null/undefined values
+            .map((e: string) => {
+                const parts = e.split(' ');
+                if (parts.length === 3) {
+                    return `${parts[0]} ${parts[1]}`;
+                }
+                return e;
+            });
+    });
+
     const managerRule = api.newDataValidation() 
-        .requireValueInList(employeeStore.employees)
+        .requireValueInList(names.value)
         .setOptions({
             showErrorMessage: true,
             error: 'Значение должно быть из списка менеджеров',
