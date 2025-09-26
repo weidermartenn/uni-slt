@@ -1,23 +1,14 @@
+import { getUser } from "~/helpers/getUser";
 export default defineNuxtPlugin(async (nuxtApp) => {
   if (import.meta.server) return;
 
-  const userCookie = useCookie<string | null>('u', {
-    decode: (value) => {
-      try {
-        return value ? atob(value) : null;
-      } catch {
-        return null;
-      }
-    },
-  });
+  const user = getUser();
 
-  const rawUser = userCookie.value ? JSON.parse(userCookie.value) : null;
-
-  if (!rawUser?.id || !rawUser?.token) return;
+  if (!user?.id || !user?.token) return;
 
   const table = 'transportAccounting';
-  const userId = rawUser.id;
-  const token = rawUser.token;
+  const userId = user.id;
+  const token = user.token;
 
   const runtimeConfig = useRuntimeConfig();
   const wsBase = runtimeConfig.public.wsBackendURI || 'wss://kings-logix.ru';
@@ -97,7 +88,7 @@ export default defineNuxtPlugin(async (nuxtApp) => {
   const refreshSocketCredentials = () => {
     disconnect();
 
-    const refreshedUser = userCookie.value ? JSON.parse(userCookie.value) : null;
+    const refreshedUser = getUser();
 
     if (!refreshedUser?.id || !refreshedUser?.token) {
       ws = null;

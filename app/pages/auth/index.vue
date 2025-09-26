@@ -1,18 +1,4 @@
 <template>
-  <Teleport to="body">
-    <div
-      v-if="isRouting"
-      aria-busy="true"
-      class="fixed inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-sm"
-    >
-      <div
-        class="flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg bg-white dark:bg-zinc-900"
-      >
-        <UIcon name="i-lucide-loader" class="w-5 h-5 animate-spin" />
-        <span class="text-sm font-medium">Переход</span>
-      </div>
-    </div>
-  </Teleport>
   <UApp>
     <div
       v-cloak
@@ -215,51 +201,53 @@ const onSubmit = async () => {
 };
 
 const onConfirmCode = async () => {
-  if (codeValue.value.length !== 4) {
-    toast.add({
-      title: "Введите 4 цифры кода",
-      color: "error",
-      icon: "i-lucide-alert-triangle",
-    });
-    return;
-  }
+  if (isRouting.value) return;
 
-  const res: any = await postUserConfirmCode(clearPhone.value, codeValue.value);
-  if (res?.operationResult === "OK") {
-    const confirmedUser = res.object?.user || null;
+  isRouting.value = true;
 
-    const token = res.object?.jwtToken as string | undefined;
-
-    const minimalUser = {
-      id: confirmedUser.id ?? null,
-      confirmed: !!confirmedUser.confirmed,
-      roleCode: confirmedUser.role?.code ?? null,
-      token: token ?? null,
-    };
-
-    const accessToken = useCookie('access_token', {
-      path: '/',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 30,
-      encode: (value: string) => value,
-    });
-    accessToken.value = token ?? null;
-
-    const userCookie = useCookie('u', {
-      path: '/',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 30,
-      encode: (value: string) => value,
-    });
-    userCookie.value = btoa(JSON.stringify(minimalUser));
-
-    isRouting.value = true;
-
-    try {
-      return await navigateTo('/', { replace: true });
-    } finally {
-      isRouting.value = false;
+  try {
+    if (codeValue.value.length !== 4) {
+      toast.add({
+        title: "Введите 4 цифры кода",
+        color: "error",
+        icon: "i-lucide-alert-triangle",
+      });
+      return;
     }
+
+    const res: any = await postUserConfirmCode(clearPhone.value, codeValue.value);
+    if (res?.operationResult === "OK") {
+      const confirmedUser = res.object?.user || null;
+
+      const token = res.object?.jwtToken as string | undefined;
+
+      const minimalUser = {
+        id: confirmedUser.id ?? null,
+        confirmed: !!confirmedUser.confirmed,
+        roleCode: confirmedUser.role?.code ?? null,
+        token: token ?? null,
+      };
+
+      const accessToken = useCookie('access_token', {
+        path: '/',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 30,
+        encode: (value: string) => value,
+      });
+      accessToken.value = token ?? null;
+
+      const userCookie = useCookie('u', {
+        path: '/',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 30,
+        encode: (value: string) => value,
+      });
+      userCookie.value = btoa(JSON.stringify(minimalUser));
+
+      useRouter().push("/");
+    } 
+  } finally {
+    isRouting.value = false;
   }
 };
 

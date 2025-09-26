@@ -2,12 +2,27 @@ import { defineStore } from "pinia";
 import type { TransportAccounting } from "~/entities/TransportAccountingDto/types";
 import type { TransportAccountingSR } from "~/entities/TransportAccountingSaveRequestDto/types";
 import type { TransportAccountingUpdate } from "~/entities/TransportAccountingUpdateDto/types";
+import { getUser } from "~/helpers/getUser";
+
+const { public: { sltApiBase } } = useRuntimeConfig();
 
 interface SocketEvent {
   type: "status_create" | "status_update" | "status_delete";
   userId: number;
   listToDel?: string | null;
   transportAccountingDto?: TransportAccounting[] | any;
+}
+
+function authHeaders(extra?: HeadersInit): HeadersInit {
+  const u = getUser?.();
+  const token = u?.token
+  const base: HeadersInit = {
+    Accept: "application/json",
+    "Content-Type": "application/json"
+  };
+  if (token) (base as Record<string, string>).Authorization = `Bearer ${token}`
+
+  return { ...base, ...(extra || {}) }
 }
 
 export const useSheetStore = defineStore("sheet", {
@@ -37,19 +52,16 @@ export const useSheetStore = defineStore("sheet", {
       this.loading = true;
       this.error = "";
       try {
-        const headers = import.meta.server
-          ? useRequestHeaders(["cookie"])
-          : undefined;
-        const me = await $fetch("/api/authorization/me", { headers });
-
+        const headers = import.meta.server ? useRequestHeaders(["cookie"]) : undefined;
+        const currentUser = getUser();
         let path = "";
-        if (me?.roleCode === "ROLE_ADMIN" || me?.roleCode === "ROLE_BUH") {
-          path = "/api/worktable/admin-worktable-records";
+        if (currentUser?.roleCode === "ROLE_ADMIN" || currentUser?.roleCode === "ROLE_BUH") {
+          path = `${sltApiBase}/workTable/transportAccounting/admin`;
         } else {
-          path = "/api/worktable/user-worktable-records";
+          path = `${sltApiBase}/workTable/transportAccounting/user`;
         }
 
-        const data = await $fetch<TransportAccounting[]>(path, { headers });
+        const data = await $fetch<TransportAccounting[]>(path, { headers: authHeaders() });
 
         // @ts-ignore
         const obj = data?.object ?? data?.body?.object ?? {};
@@ -72,25 +84,28 @@ export const useSheetStore = defineStore("sheet", {
     },
 
     async addRecords(dtos: TransportAccountingSR[]) {
-      await $fetch("/api/worktable/record-add", {
+      await $fetch(`${sltApiBase}/workTable/transportAccounting`, {
         method: "POST",
+        headers: authHeaders(),
         body: dtos,
       });
     },
 
     async updateRecords(dtos: TransportAccountingUpdate[]) {
       if (!Array.isArray(dtos) || dtos.length === 0) return;
-      await $fetch("/api/worktable/record-update", {
+      await $fetch(`${sltApiBase}/workTable/transportAccounting`, {
         method: "PATCH",
+        headers: authHeaders(),
         body: dtos,
       });
     },
 
     async deleteRecords(listToDelete: number[]) {
       if (!Array.isArray(listToDelete) || listToDelete.length === 0) return;
-      await $fetch("/api/worktable/record-remove", {
+      await $fetch(`${sltApiBase}/workTable/transportAccounting`, {
         method: "DELETE",
-        body: { transportAccountingIds: listToDelete },
+        headers: authHeaders(),
+        body: listToDelete,
       });
     },
 

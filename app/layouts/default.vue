@@ -85,6 +85,7 @@
 <script setup lang="ts">
 const isMenuOpen = ref(false);
 import { useTheme } from '~/composables/useTheme';
+import { getUser } from '~/helpers/getUser';
 const { darkTheme } = useTheme();
 
 // avoid hydration mismatch for theme-dependent classes
@@ -111,13 +112,7 @@ const items: Item[] = [
   },
 ];
 
-const headers = import.meta.server ? useRequestHeaders(["cookie"]) : undefined;
-const { data: me } = await useFetch<{
-  confirmed?: boolean;
-  roleCode?: string;
-} | null>("/api/authorization/me", { headers });
-
-const role = computed(() => me.value?.roleCode);
+const currentUser = getUser()
 
 const roleName = computed(() => {
     const roleMap: Record<string, string> = {
@@ -126,10 +121,10 @@ const roleName = computed(() => {
         "ROLE_MANAGER": "Менеджер",
         "ROLE_USER": "Пользователь",
     };
-    return roleMap[me.value?.roleCode ?? ""] || "Пользователь";
+    return roleMap[currentUser?.roleCode ?? ""] || "Пользователь";
 });
 
-const isAdmin = computed(() => me.value?.roleCode === "ROLE_ADMIN");
+const isAdmin = computed(() => currentUser?.roleCode === "ROLE_ADMIN");
 const visibleItems = computed(() =>
   items.filter((i) => i.role !== "admin" || isAdmin.value)
 );

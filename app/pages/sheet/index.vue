@@ -1,7 +1,7 @@
 <template>
   <UApp>
     <div class="relative w-full h-[90vh]">
-      <div
+      <!-- <div
         v-show="showFallback"
         class="absolute inset-0 flex items-center justify-center bg-white/90 dark:bg-zinc-900 z-10"
       >
@@ -9,7 +9,7 @@
           <UIcon name="i-lucide-loader-pinwheel" class="w-10 h-10 animate-spin text-zinc-900 dark:text-zinc-100" />
           <p class="mt-2 text-lg font-medium text-zinc-900 dark:text-zinc-100">Загрузка данных таблицы</p>
         </div>
-      </div>
+      </div> -->
 
       <div class="absolute flex items-center gap-10 -top-13 right-10">
         <div v-show="deleteState.pending" class="v-row items-center p-2 rounded-md bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
