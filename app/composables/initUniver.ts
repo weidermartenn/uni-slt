@@ -83,7 +83,8 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
           'sheet.menu.cell-insert': { hidden: false },
           'sheet.menu.clear-selection': { hidden: true },
           'sheet.contextMenu.permission': { hidden: true },
-          'sheet.menu.sheet-frozen': { hidden: true }
+          'sheet.menu.sheet-frozen': { hidden: true },
+          'sheet.command.numfmt.set.currency': { hidden: false },
         }
       }),
       UniverSheetsDataValidationPreset(),

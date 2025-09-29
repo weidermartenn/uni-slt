@@ -56,7 +56,7 @@
             >
             <div class="grid grid-cols-1 gap-4">
               <UButton
-                @click="$router.push('/admin/employees')"
+                @click="$router.push('/admin')"
                 class="slideover-button"
               >
                 <UIcon name="i-lucide-users" class="h-16 w-16" />
