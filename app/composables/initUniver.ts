@@ -17,14 +17,14 @@ import BidButtonIcon from '~/univer/custom-menu/components/button-icon/BidButton
 import AgreementButtonIcon from '~/univer/custom-menu/components/button-icon/AgreementButtonIcon.vue';
 import { addConditionalFormatting } from '~/helpers/conditionalFormatting';
 import type { FWorksheet } from '@univerjs/preset-sheets-core';
+import { getUser } from '~/helpers/getUser';
 
 const tr = ref<number>(0);
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') throw new Error('initUniver must be called on the client');
 
-  const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined;
-  const me: any = await $fetch('/api/authorization/me', { headers }).catch(() => null);
+  const me = getUser()
 
   const [
     { createUniver, LocaleType, mergeLocales },
