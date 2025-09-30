@@ -1,6 +1,7 @@
 import type { FUniver } from '@univerjs/presets';
 import { useSheetStore } from '~/stores/sheet-store'; // Assuming this is a Pinia store or similar for reactivityAssuming a composable for toast notifications
 import { getUser } from './getUser';
+import type { FWorksheet } from '@univerjs/presets/lib/types/preset-sheets-core/index.js';
 
 // Centralized Univer event registrations
 export function registerUniverEvents(univerAPI: FUniver) {
@@ -289,7 +290,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         requestedRows.add(key); // Mark as in-flight
         try {
           sheetStore.anchorCreateRow(listName, row)
-          await sheetStore.addRecords([dto]);
+          // await sheetStore.addRecords([dto]);
           console.log('[univer-events] CREATE: request sent, awaiting socket update for row', row);
           // Highlight immediately if not loading (visual feedback)
           if (sheetStore.loading === false) highlightRow(aws, row);
@@ -629,7 +630,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       if (createDtos.length) {
         console.log('[univer-events] PASTE: Sending addRecords batch', { count: createDtos.length, createDtos });
-        await sheetStore.addRecords(createDtos);
+        // await sheetStore.addRecords(createDtos);
       }
 
       if (updateDtos.length) {
@@ -662,4 +663,93 @@ export function registerUniverEvents(univerAPI: FUniver) {
     try { (offBeforePaste as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offBeforePaste', e); }
     try { (offPasted as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offPasted', e); }
   };
+}
+
+export type DropdownCtx = {
+    row: number;
+    column: number;
+    letter: string;
+    value: unknown;
+    api: FUniver;
+    sheet: FWorksheet;
+}
+
+type ApplyUpdatesFn = (updates: Array<{ row: number; column: number; value: any }>) => void
+type DropdownHandler = (ctx: DropdownCtx, apply: ApplyUpdatesFn) => void
+
+export function registerDropdownValueChanged(
+  api: FUniver,
+  sheet: FWorksheet,
+  handlers: Record<string, DropdownHandler>,
+) {
+  let internalWrite = false
+
+  const colLetter = (col: number) => {
+    let n = col, s = '';
+    while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = (n - 1) / 26; }
+    return s;
+  }
+
+  const applyUpdates: ApplyUpdatesFn = (updates) => {
+    if (!updates?.length) return 
+    internalWrite = true 
+    try {
+      for (const u of updates) {
+        sheet.getRange(u.row, u.column).setValue(u.value)
+      } 
+    } finally {
+      internalWrite = false
+    }
+  }
+
+  const processOne = (r: number, c: number) => {
+    if (r < 1 || c < 1) return
+    const range = sheet.getRange(r, c)
+    const value = 
+      typeof range.getRawValue === 'function' ? range.getRawValue() :
+      typeof range.getValue === 'function' ? range.getValue() : undefined
+    
+    const letter = (() => {
+      if (typeof range.getA1Notation === 'function') {
+        return range.getA1Notation().replace(/\d+/g, '')
+      }
+      return colLetter(c)
+    })() 
+
+    const handler = handlers[letter]
+    if (!handler) return
+
+    const ctx: DropdownCtx = { row: r, column: c, letter, value, api, sheet }
+    handler(ctx, applyUpdates)
+  }
+
+  api.addEvent(api.Event.SheetValueChanged, (ev: any) => {
+    if (internalWrite) return 
+
+    if (ev?.subUnitId && typeof sheet.getSheetId === 'function') {
+      if (ev.subUnitId !== sheet.getSheetId()) return
+    }
+
+    if (Array.isArray(ev?.changes)) {
+      for (const ch of ev.changes) {
+        processOne(ch.row, ch.column)
+      }
+      return
+    }
+
+    if (Number.isInteger(ev?.row) && Number.isInteger(ev?.column)) {
+      processOne(ev.row, ev.column)
+      return
+    }
+
+    if (Array.isArray(ev?.ranges)) {
+      for (const rg of ev.ranges) {
+        const sr = rg.startRow, er = rg.endRow, sc = rg.startColumn, ec = rg.endColumn
+        for (let r1 = sr; r1 <= er; r1++) for (let c1 = sc; c1 <= ec; c1++) processOne(r1, c1)
+      }
+      return
+    }
+  })
+  
+  return { applyUpdates }
 }
