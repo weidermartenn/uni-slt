@@ -1,7 +1,7 @@
 import { defineStore } from "pinia"
 import { getUser } from "~/helpers/getUser";
 
-const { public: { sltApiBase } } = useRuntimeConfig();
+const { public: { kingsApiBase } } = useRuntimeConfig();
 function authHeaders(extra?: HeadersInit): HeadersInit {
   const u = getUser?.();
   const token = u?.token
@@ -27,7 +27,7 @@ export const useValidationStore = defineStore('validation', {
             this.loading = true
             this.error = ""
             try {
-                const data = await $fetch(`${sltApiBase}/company/nameList`, { headers: authHeaders() });
+                const data = await $fetch(`${kingsApiBase}/company/nameList`, { headers: authHeaders() });
                 // @ts-ignore
                 const names = data.object as string[] 
                 this.companies = names

@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { getUser } from "~/helpers/getUser";
 import type { User } from "~/entities/User/types";
 
-const { public: { sltApiBase } } = useRuntimeConfig();
+const { public: { kingsApiBase } } = useRuntimeConfig();
 function authHeaders(extra?: HeadersInit): HeadersInit {
   const u = getUser?.();
   const token = u?.token
@@ -23,21 +23,21 @@ export const useEmployeeStore = defineStore("employee", {
 
   actions: {
     async fetchEmployees() {
-        const data = await $fetch(`${sltApiBase}/employee/nameList`, { headers: authHeaders() });
+        const data = await $fetch(`${kingsApiBase}/employee/nameList`, { headers: authHeaders() });
 
         // @ts-ignore
         this.employees = data?.object || []
     },
 
     async fetchAllEmployeeInfos() {
-      const data = await $fetch(`${sltApiBase}/admin/employees`, { headers: authHeaders() });
+      const data = await $fetch(`${kingsApiBase}/admin/employees`, { headers: authHeaders() });
 
       // @ts-ignore
       this.employeesAllInfo = data?.object || {}
     },
 
     async deleteEmployee(id: number) {
-      await $fetch(`${sltApiBase}/admin/employees/${id}`, { method: "DELETE", headers: authHeaders() });
+      await $fetch(`${kingsApiBase}/admin/employees/${id}`, { method: "DELETE", headers: authHeaders() });
       this.employeesAllInfo = this.employeesAllInfo.filter(u => u.id !== id);
     }
   }

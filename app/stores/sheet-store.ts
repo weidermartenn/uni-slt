@@ -4,7 +4,7 @@ import type { TransportAccountingSR } from "~/entities/TransportAccountingSaveRe
 import type { TransportAccountingUpdate } from "~/entities/TransportAccountingUpdateDto/types";
 import { getUser } from "~/helpers/getUser";
 
-const { public: { sltApiBase } } = useRuntimeConfig();
+const { public: { kingsApiBase } } = useRuntimeConfig();
 
 interface SocketEvent {
   type: "status_create" | "status_update" | "status_delete";
@@ -56,9 +56,9 @@ export const useSheetStore = defineStore("sheet", {
         const currentUser = getUser();
         let path = "";
         if (currentUser?.roleCode === "ROLE_ADMIN" || currentUser?.roleCode === "ROLE_BUH") {
-          path = `${sltApiBase}/workTable/transportAccounting/admin`;
+          path = `${kingsApiBase}/workTable/transportAccounting/admin`;
         } else {
-          path = `${sltApiBase}/workTable/transportAccounting/user`;
+          path = `${kingsApiBase}/workTable/transportAccounting/user`;
         }
 
         const data = await $fetch<TransportAccounting[]>(path, { headers: authHeaders() });
@@ -84,7 +84,7 @@ export const useSheetStore = defineStore("sheet", {
     },
 
     async addRecords(dtos: TransportAccountingSR[]) {
-      await $fetch(`${sltApiBase}/workTable/transportAccounting`, {
+      await $fetch(`${kingsApiBase}/workTable/transportAccounting`, {
         method: "POST",
         headers: authHeaders(),
         body: dtos,
@@ -93,7 +93,7 @@ export const useSheetStore = defineStore("sheet", {
 
     async updateRecords(dtos: TransportAccountingUpdate[]) {
       if (!Array.isArray(dtos) || dtos.length === 0) return;
-      await $fetch(`${sltApiBase}/workTable/transportAccounting`, {
+      await $fetch(`${kingsApiBase}/workTable/transportAccounting`, {
         method: "PATCH",
         headers: authHeaders(),
         body: dtos,
@@ -102,7 +102,7 @@ export const useSheetStore = defineStore("sheet", {
 
     async deleteRecords(listToDelete: number[]) {
       if (!Array.isArray(listToDelete) || listToDelete.length === 0) return;
-      await $fetch(`${sltApiBase}/workTable/transportAccounting`, {
+      await $fetch(`${kingsApiBase}/workTable/transportAccounting`, {
         method: "DELETE",
         headers: authHeaders(),
         body: listToDelete,
