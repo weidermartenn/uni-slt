@@ -18,6 +18,8 @@ import AgreementButtonIcon from '~/univer/custom-menu/components/button-icon/Agr
 import { addConditionalFormatting } from '~/helpers/conditionalFormatting';
 import type { FWorksheet } from '@univerjs/preset-sheets-core';
 import { getUser } from '~/helpers/getUser';
+import UpdateHistoryButtonIcon from '~/univer/custom-menu/components/button-icon/UpdateHistoryButtonIcon.vue';
+import { useUniverStore } from '~/stores/univer-store';
 
 const tr = ref<number>(0);
 
@@ -98,6 +100,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
 
   univerAPI.registerComponent('BidButtonIcon', BidButtonIcon, { framework: 'vue3' });
   univerAPI.registerComponent('AgreementButtonIcon', AgreementButtonIcon, { framework: 'vue3' });
+  univerAPI.registerComponent('UpdateHistoryButtonIcon', UpdateHistoryButtonIcon, { framework: 'vue3' });
 
   // ---------- helpers ----------
   const lettersToIndex = (s: string): number => {
@@ -241,6 +244,13 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     name: 'TransportAccounting',
     styles, sheets: sheetsDef, resources: []
   });
+
+  try {
+    const uniStore = useUniverStore();
+    uniStore.setUniver(univerAPI);
+  } catch (e) {
+    console.log(e);
+  }
 
   // ---------- expose API & header styling ----------
   try {

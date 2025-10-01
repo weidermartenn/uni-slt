@@ -8,5 +8,8 @@ export default {
     },
     agreementButton: {
         button: 'Создать договор'
+    },
+    updateHistoryButton: {
+        button: 'Посмотреть историю изменений'
     }
 }

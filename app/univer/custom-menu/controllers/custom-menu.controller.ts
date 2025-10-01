@@ -1,9 +1,9 @@
 import { Disposable, ICommandService, Injector } from "@univerjs/presets";
 import { Inject } from "@wendellhu/redi";
 import { ComponentManager, IMenuManagerService } from "@univerjs/ui";
-import { BidButtonOperation, AgreementButtonOperation, SingleButtonOperation } from "../commands/operations/single-button.operations";
+import { BidButtonOperation, AgreementButtonOperation, SingleButtonOperation, UpdateHistoryButtonOperation } from "../commands/operations/single-button.operations";
 import { ContextMenuGroup, ContextMenuPosition } from "@univerjs/ui";
-import { CustomMenuItemSingleButtonFactory, BidButtonMenuItemFactory, AgreementButtonMenuItemFactory } from "./menu";
+import { CustomMenuItemSingleButtonFactory, BidButtonMenuItemFactory, AgreementButtonMenuItemFactory, UpdateHistoryMenuItemFactory } from "./menu";
 import BidButtonIcon from '../components/button-icon/BidButtonIcon.vue'
 export class CustomMenuController extends Disposable {
     constructor(
@@ -22,6 +22,9 @@ export class CustomMenuController extends Disposable {
     private _initCommands(): void { 
         [
             SingleButtonOperation,
+            BidButtonOperation,
+            AgreementButtonOperation,
+            UpdateHistoryButtonOperation
         ].forEach((c) => {
             this.disposeWithMe(this._commandService.registerCommand(c))
         })
@@ -42,6 +45,10 @@ export class CustomMenuController extends Disposable {
                         order: 13,
                         menuItemFactory: AgreementButtonMenuItemFactory
                     },
+                    [UpdateHistoryButtonOperation.id]: {
+                        order: 14,
+                        menuItemFactory: UpdateHistoryMenuItemFactory
+                    }
                 }
             }
         })

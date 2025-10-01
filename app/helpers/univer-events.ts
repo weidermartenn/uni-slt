@@ -15,6 +15,34 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const requestedRows = new Set<string>();
   let batchPasteInProgress = false; // Flag to indicate if a paste operation is in progress
 
+  const getOperationErrorMessage = (raw: any): string | null => {
+    const inspect = (x: any): string | null => {
+      if (!x) return null 
+
+      if (typeof x === 'object' && x.operationResult === 'ERROR') {
+        return typeof x.operationInfo === 'string' ? x.operationInfo : 'Ошибка'
+      }
+
+      return null
+    }
+    return inspect(raw)
+  }
+
+  const handleClientColumnError = async (m: string) => {
+    await univerAPI.undo()
+    try {
+      const toast = useToast()
+      toast.add({ 
+        title: 'Ошибка при добавлении клиента',
+        description: m,
+        color: 'error',
+        duration: 3500
+      })
+    } catch (e) {
+      console.error('[univer-events] handleClientColumnError failed', e)
+    }
+  }
+
   // Lazy user fetch + helpers
   let cachedMe: any | undefined;
   const getMe = async () => {
@@ -291,9 +319,37 @@ export function registerUniverEvents(univerAPI: FUniver) {
         try {
           sheetStore.anchorCreateRow(listName, row)
           // await sheetStore.addRecords([dto]);
-          console.log('[univer-events] CREATE: request sent, awaiting socket update for row', row);
-          // Highlight immediately if not loading (visual feedback)
-          if (sheetStore.loading === false) highlightRow(aws, row);
+          // console.log('[univer-events] CREATE: request sent, awaiting socket update for row', row);
+          // // Highlight immediately if not loading (visual feedback)
+          // if (sheetStore.loading === false) highlightRow(aws, row);
+          let addRes: any 
+          try {
+            sheetStore.anchorCreateRow(listName, row)
+            addRes = await sheetStore.addRecords([dto])
+
+            if (col === 7) {
+              const msg = getOperationErrorMessage(addRes)
+              if (msg) {
+                await handleClientColumnError(msg)
+                return
+              }
+            }
+            console.log('[univer-events] CREATE: request sent, awaiting socket update for row', row)
+            if (sheetStore.loading === false) highlightRow(aws, row)
+          } catch (e) {
+            if (col === 7) {
+              const msg = getOperationErrorMessage(e)
+              if (msg) {
+                await handleClientColumnError(msg)
+                return
+              }
+            }
+            console.error('[univer-events] CREATE failed for row', row, ':', e)
+          } finally {
+            requestedRows.delete(key) // Remove from in-flight
+            console.log('[univer-events] CREATE: cleanup request flag for row', key)
+          }
+          return
         } catch (e) {
           console.error('[univer-events] CREATE failed for row', row, ':', e);
           // Optionally show an error toast here
@@ -316,10 +372,33 @@ export function registerUniverEvents(univerAPI: FUniver) {
           ...buildSR(rowVals, listName, idNum),
           id: idNum, // Ensure ID is explicitly set for update
         };
-        console.log('[univer-events] UPDATE: sending updateRecords', { listName, idNum, updateDto });
-        await sheetStore.updateRecords([updateDto]);
-        console.log('[univer-events] UPDATE: success for row', row, 'ID', idNum);
-        if (sheetStore.loading === false) highlightRow(aws, row);
+        // console.log('[univer-events] UPDATE: sending updateRecords', { listName, idNum, updateDto });
+        // await sheetStore.updateRecords([updateDto]);
+        // console.log('[univer-events] UPDATE: success for row', row, 'ID', idNum);
+        // if (sheetStore.loading === false) highlightRow(aws, row);
+        let updRes: any
+        try {
+          updRes = await sheetStore.updateRecords([updateDto])
+
+          if (col === 7) {
+            const msg = getOperationErrorMessage(updRes)
+            if (msg) {
+              await handleClientColumnError(msg)
+              return
+            }
+          }
+          console.log('[univer-events] UPDATE: success for row', row, 'ID', idNum)
+          if (sheetStore.loading === false) highlightRow(aws, row)
+        } catch (e) {
+          if (col === 7) {
+            const msg = getOperationErrorMessage(e)
+            if (msg) {
+              await handleClientColumnError(msg)
+              return
+            }
+          }
+          console.error('[univer-events] UPDATE failed for row', row, ':', e)
+        }
       } catch (e) {
         console.error('[univer-events] UPDATE failed for row', row, ':', e);
         // Optionally show an error toast here
@@ -630,7 +709,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       if (createDtos.length) {
         console.log('[univer-events] PASTE: Sending addRecords batch', { count: createDtos.length, createDtos });
-        // await sheetStore.addRecords(createDtos);
+        await sheetStore.addRecords(createDtos);
       }
 
       if (updateDtos.length) {

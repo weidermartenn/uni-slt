@@ -1,6 +1,6 @@
 import type { IMenuButtonItem } from "@univerjs/ui"
 import { MenuItemType } from "@univerjs/ui"
-import { SingleButtonOperation, BidButtonOperation, AgreementButtonOperation } from "../commands/operations/single-button.operations"
+import { SingleButtonOperation, BidButtonOperation, AgreementButtonOperation, UpdateHistoryButtonOperation } from "../commands/operations/single-button.operations"
 
 export function CustomMenuItemSingleButtonFactory(): IMenuButtonItem<string> {
     return {
@@ -26,5 +26,14 @@ export function AgreementButtonMenuItemFactory(): IMenuButtonItem<string> {
         type: MenuItemType.BUTTON,
         icon: 'AgreementButtonIcon',
         title: 'agreementButton.button'
+    }
+}
+
+export function UpdateHistoryMenuItemFactory(): IMenuButtonItem<string> {
+    return {
+        id: UpdateHistoryButtonOperation.id,
+        type: MenuItemType.BUTTON,
+        icon: 'UpdateHistoryButtonIcon',
+        title: 'updateHistoryButton.button'
     }
 }
