@@ -201,7 +201,10 @@ onMounted(async () => {
   }
 
   watch([rendered, dataLoaded, fontsReady], ([r, d, f]) => {
-    if (r && d && f) showFallback.value = false;
+    if (r && d && f) {
+      showFallback.value = false;
+    }
+
   }, { immediate: true });
 });
 </script>

@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import type { FUniver } from "@univerjs/core/facade";
-import { get } from "@nuxt/ui/runtime/utils/index.js";
+import { get, set } from "@nuxt/ui/runtime/utils/index.js";
 
 export const useUniverStore = defineStore("univer", {
     state: () => ({
@@ -8,7 +8,10 @@ export const useUniverStore = defineStore("univer", {
         cellHistoryList: [] as Array<any>,
         cellHistoryMeta: null as null | { 
             a1: string;
-        }
+        },
+        batchProgress: true,
+        suppressLevel: 0,
+        uiReady: false,
     }),
 
     actions: {
@@ -25,6 +28,19 @@ export const useUniverStore = defineStore("univer", {
         }) {
             this.cellHistoryList = data || []
             this.cellHistoryMeta = meta
-        }
+        },
+
+        setBatchProgress(data: boolean) {
+            this.batchProgress = data
+        },
+
+        getBatchProgress() {
+            return this.batchProgress
+        },
+        
+        beginQuiet() { this.suppressLevel++ },
+        endQuiet() { this.suppressLevel = Math.max(0, this.suppressLevel - 1) },
+        isQuiet() { return this.suppressLevel > 0 || this.batchProgress },
+        setUiReady(v: boolean) { this.uiReady = v },
     }
 });

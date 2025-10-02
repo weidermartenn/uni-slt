@@ -1,3 +1,4 @@
+// initUniver.ts
 import type { FUniver } from '@univerjs/core/facade';
 import('@univerjs/network/facade');
 import type { TransportAccounting } from '~/entities/TransportAccountingDto/types';
@@ -15,19 +16,25 @@ import { UniverSheetsCustomMenuPlugin } from '~/univer/custom-menu'
 import { UniverVue3AdapterPlugin } from '@univerjs/ui-adapter-vue3';
 import BidButtonIcon from '~/univer/custom-menu/components/button-icon/BidButtonIcon.vue';
 import AgreementButtonIcon from '~/univer/custom-menu/components/button-icon/AgreementButtonIcon.vue';
+import UpdateHistoryButtonIcon from '~/univer/custom-menu/components/button-icon/UpdateHistoryButtonIcon.vue';
+import CellHistorySidebar from '~/components/CellHistorySidebar.vue';
 import { addConditionalFormatting } from '~/helpers/conditionalFormatting';
 import type { FWorksheet } from '@univerjs/preset-sheets-core';
 import { getUser } from '~/helpers/getUser';
-import UpdateHistoryButtonIcon from '~/univer/custom-menu/components/button-icon/UpdateHistoryButtonIcon.vue';
 import { useUniverStore } from '~/stores/univer-store';
-import CellHistorySidebar from '~/components/CellHistorySidebar.vue';
 
 const tr = ref<number>(0);
 
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') throw new Error('initUniver must be called on the client');
 
-  const me = getUser()
+  const univerStore = useUniverStore();
+  // --- старт загрузки ---
+  univerStore.setBatchProgress(true);
+  univerStore.beginQuiet();
+  univerStore.setUiReady(false);
+
+  const me = getUser();
 
   const [
     { createUniver, LocaleType, mergeLocales },
@@ -99,6 +106,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   univer.registerPlugin(UniverVue3AdapterPlugin);
   univer.registerPlugin(UniverSheetsCustomMenuPlugin);
 
+  // регистрируем кастомные компоненты заранее
   univerAPI.registerComponent('BidButtonIcon', BidButtonIcon, { framework: 'vue3' });
   univerAPI.registerComponent('AgreementButtonIcon', AgreementButtonIcon, { framework: 'vue3' });
   univerAPI.registerComponent('UpdateHistoryButtonIcon', UpdateHistoryButtonIcon, { framework: 'vue3' });
@@ -106,7 +114,6 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
 
   // ---------- helpers ----------
   const lettersToIndex = (s: string): number => {
-    // A->0, Z->25, AA->26, AB->27 ...
     let n = 0;
     for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
     return n - 1;
@@ -176,7 +183,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   };
 
   // ---------- build initial workbook ----------
-  const initialRowIndexMap = new Map<string, Map<number, number>>(); // listName -> (id -> rowIndex)
+  const initialRowIndexMap = new Map<string, Map<number, number>>();
   const sheetsDef: Record<string, any> = {};
   let i = 0;
 
@@ -247,6 +254,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     styles, sheets: sheetsDef, resources: []
   });
 
+  // сохранить API в стор
   try {
     const uniStore = useUniverStore();
     uniStore.setUniver(univerAPI);
@@ -275,25 +283,20 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     } catch {}
   } catch {}
 
-  // ---------- register UI edit events ----------
-  registerUniverEvents(univerAPI);
-
   // ---------- socket wiring with address-only rendering ----------
   try {
     const store = useSheetStore();
     const { $wsOnMessage } = useNuxtApp();
 
-    // Быстрый доступ к строке по id
-    const rowIndexMapByList = new Map(initialRowIndexMap); // копия, будем дополнять
+    const rowIndexMapByList = new Map(initialRowIndexMap);
     const lastCounts = new Map<string, number>(
       Object.entries(records || {}).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0])
     );
 
-    // Батч-очередь на один кадр
     type QItem = { type: 'create' | 'update'; rec: any };
-    const queue = new Map<string, QItem[]>(); // listName -> items
+    const queue = new Map<string, QItem[]>();
     let scheduled = false;
-    const RENDER_ONLY_ACTIVE_SHEET = me?.roleCode === 'ROLE_ADMIN'; // критично для админа
+    const RENDER_ONLY_ACTIVE_SHEET = me?.roleCode === 'ROLE_ADMIN';
 
     const flush = () => {
       scheduled = false;
@@ -304,11 +307,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       for (const [listName, items] of queue) {
         queue.delete(listName);
         if (!items.length) continue;
-
-        if (RENDER_ONLY_ACTIVE_SHEET && listName !== activeName) {
-          // Пропускаем оффскрин-рендер для админа — обновим UI, когда откроет вкладку.
-          continue;
-        }
+        if (RENDER_ONLY_ACTIVE_SHEET && listName !== activeName) continue;
 
         const sheet = wb.getSheetByName(listName);
         if (!sheet) continue;
@@ -316,19 +315,16 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         const idToRow = rowIndexMapByList.get(listName) || new Map<number, number>();
         rowIndexMapByList.set(listName, idToRow);
 
-        // Разделим на create & update для корректных индексов
         const creates: any[] = [];
         const updates: any[] = [];
         for (const qi of items) (qi.type === 'create' ? creates : updates).push(qi.rec);
 
-        // updates — адресные
         if (updates.length) {
           const arr = store.records[listName] || [];
           for (const it of updates) {
             const id = Number(it?.id);
             let rowIndex = idToRow.get(id);
             if (!rowIndex) {
-              // fallback: найдём по массиву (редкий случай)
               const idx = arr.findIndex((r: any) => Number(r?.id) === id);
               if (idx >= 0) rowIndex = idx + 1;
             }
@@ -336,14 +332,12 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
           }
         }
 
-        // creates — добавляем в конец
         if (creates.length) {
-          // длина ДО мутации стора (socketHandlers вызываются до splice/push)
           const baseLen = store.records[listName]?.length ?? (lastCounts.get(listName) ?? 0);
           let cursor = baseLen;
           for (const it of creates) {
             const anchored = store.takeAnchoredCreateRow(listName);
-            const rowIndex = (typeof anchored === 'number' && anchored >= 1) ? anchored : (cursor + 1)                                     
+            const rowIndex = (typeof anchored === 'number' && anchored >= 1) ? anchored : (cursor + 1);
             renderRow(sheet, it as TransportAccounting, rowIndex);
             const id = Number(it?.id);
             if (Number.isFinite(id)) idToRow.set(id, rowIndex);
@@ -351,10 +345,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
           }
           lastCounts.set(listName, Math.max(lastCounts.get(listName) ?? 0, cursor));
         }
-      }                 
+      }
     };
 
-    // Полная перерисовка листа (используем для delete)
     const rerenderSheet = (listName: string) => {
       const wb = univerAPI.getActiveWorkbook();
       const sheet = wb?.getSheetByName(listName);
@@ -367,11 +360,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
           Array.from({ length: 28 }, (_, col) => ({ v: mapValueByCol(it, col) }))
         );
         sheet.getRange(1, 0, rows, 28).setValues(matrix);
-        // стили построчно
         for (let r = 0; r < rows; r++) applyRowStyles(sheet, items[r], r + 1);
       }
 
-      // пересобираем карту индексов
       const idToRow = new Map<number, number>();
       for (let r = 0; r < rows; r++) {
         const id = Number(items[r]?.id);
@@ -379,7 +370,6 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       }
       rowIndexMapByList.set(listName, idToRow);
 
-      // очистка хвоста
       const prev = lastCounts.get(listName) ?? rows;
       if (prev > rows) {
         const toClear = prev - rows;
@@ -391,7 +381,6 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       lastCounts.set(listName, rows);
     };
 
-    // Сырой сокет → нормализованный стор
     if (typeof $wsOnMessage === 'function') {
       $wsOnMessage((payload: any) => {
         const wb = univerAPI.getActiveWorkbook();
@@ -400,22 +389,18 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       });
     }
 
-    // Адресные UI-апдейты ДО мутации стора (socketHandlers вызываются в начале applySocketMessage)
     store.socketHandlers.push((msg: any) => {
       const wb = univerAPI.getActiveWorkbook();
       if (!wb) return;
 
-      // Собираем byList
       const byList: Record<string, any[]> =
         msg?.transportAccountingDto?.object ??
         msg?.transportAccountingDTO?.object ??
         msg?.object ?? {};
 
-      let dtoArray: any[] | undefined =
-        msg?.transportAccountingDto ?? msg?.transportAccountingDTO;
+      let dtoArray: any[] | undefined = msg?.transportAccountingDto ?? msg?.transportAccountingDTO;
 
       if (Array.isArray(dtoArray) && dtoArray.length && !Object.keys(byList).length) {
-        // fallback: сгруппировать по listName; если его нет — в активный лист
         const ln = wb.getActiveSheet()?.getSheet()?.getName?.() || '';
         for (const it of dtoArray) {
           const key = it?.listName || ln;
@@ -427,16 +412,13 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         if (!items?.length) continue;
 
         if (msg.type === 'status_delete') {
-          // Перерисуем целиком после того, как стор применит изменения
           setTimeout(() => rerenderSheet(listName), 0);
           continue;
         }
 
-        // Скопим creates/updates и отрисуем единым фреймом
         const arr = queue.get(listName) || [];
         for (const it of items) {
-          const type: 'create' | 'update' =
-            msg.type === 'status_create' ? 'create' : 'update';
+          const type: 'create' | 'update' = msg.type === 'status_create' ? 'create' : 'update';
           arr.push({ type, rec: it });
         }
         queue.set(listName, arr);
@@ -444,7 +426,6 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
 
       if (!scheduled) {
         scheduled = true;
-        // один батч в кадр
         requestAnimationFrame(flush);
       }
     });
@@ -460,6 +441,19 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     await addConditionalFormatting(univerAPI, s);
   }
   await lockHeaders(univerAPI);
+
+  // дождаться полного рендера UI
+  await nextTick();
+  await new Promise(r => requestAnimationFrame(() => r(null)));
+  await new Promise(r => requestAnimationFrame(() => r(null)));
+
+  // финальные флаги готовности
+  univerStore.setUiReady(true);
+  univerStore.endQuiet();
+  univerStore.setBatchProgress(false);
+
+  // ---------- register UI edit events (ПОСЛЕ готовности) ----------
+  registerUniverEvents(univerAPI);
 
   return univerAPI;
 }

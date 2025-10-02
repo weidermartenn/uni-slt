@@ -1,7 +1,8 @@
 import type { FUniver } from '@univerjs/presets';
 import { useSheetStore } from '~/stores/sheet-store'; // Assuming this is a Pinia store or similar for reactivityAssuming a composable for toast notifications
 import { getUser } from './getUser';
-import type { FWorksheet } from '@univerjs/presets/lib/types/preset-sheets-core/index.js';
+import { useUniverStore } from '~/stores/univer-store';
+import type { TransportAccounting } from '~/entities/TransportAccountingDto/types';
 
 // Centralized Univer event registrations
 export function registerUniverEvents(univerAPI: FUniver) {
@@ -14,34 +15,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
   // Track rows where we already sent "add" to backend to avoid duplicates before socket response
   const requestedRows = new Set<string>();
   let batchPasteInProgress = false; // Flag to indicate if a paste operation is in progress
-
-  const getOperationErrorMessage = (raw: any): string | null => {
-    const inspect = (x: any): string | null => {
-      if (!x) return null 
-
-      if (typeof x === 'object' && x.operationResult === 'ERROR') {
-        return typeof x.operationInfo === 'string' ? x.operationInfo : 'Ошибка'
-      }
-
-      return null
-    }
-    return inspect(raw)
-  }
-
-  const handleClientColumnError = async (m: string) => {
-    await univerAPI.undo()
-    try {
-      const toast = useToast()
-      toast.add({ 
-        title: 'Ошибка при добавлении клиента',
-        description: m,
-        color: 'error',
-        duration: 3500
-      })
-    } catch (e) {
-      console.error('[univer-events] handleClientColumnError failed', e)
-    }
-  }
 
   // Lazy user fetch + helpers
   let cachedMe: any | undefined;
@@ -318,38 +291,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
         requestedRows.add(key); // Mark as in-flight
         try {
           sheetStore.anchorCreateRow(listName, row)
-          // await sheetStore.addRecords([dto]);
-          // console.log('[univer-events] CREATE: request sent, awaiting socket update for row', row);
-          // // Highlight immediately if not loading (visual feedback)
-          // if (sheetStore.loading === false) highlightRow(aws, row);
-          let addRes: any 
-          try {
-            sheetStore.anchorCreateRow(listName, row)
-            addRes = await sheetStore.addRecords([dto])
-
-            if (col === 7) {
-              const msg = getOperationErrorMessage(addRes)
-              if (msg) {
-                await handleClientColumnError(msg)
-                return
-              }
-            }
-            console.log('[univer-events] CREATE: request sent, awaiting socket update for row', row)
-            if (sheetStore.loading === false) highlightRow(aws, row)
-          } catch (e) {
-            if (col === 7) {
-              const msg = getOperationErrorMessage(e)
-              if (msg) {
-                await handleClientColumnError(msg)
-                return
-              }
-            }
-            console.error('[univer-events] CREATE failed for row', row, ':', e)
-          } finally {
-            requestedRows.delete(key) // Remove from in-flight
-            console.log('[univer-events] CREATE: cleanup request flag for row', key)
-          }
-          return
+          await sheetStore.addRecords([dto]);
+          console.log('[univer-events] CREATE: request sent, awaiting socket update for row', row);
+          // Highlight immediately if not loading (visual feedback)
+          if (sheetStore.loading === false) highlightRow(aws, row);
         } catch (e) {
           console.error('[univer-events] CREATE failed for row', row, ':', e);
           // Optionally show an error toast here
@@ -372,33 +317,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
           ...buildSR(rowVals, listName, idNum),
           id: idNum, // Ensure ID is explicitly set for update
         };
-        // console.log('[univer-events] UPDATE: sending updateRecords', { listName, idNum, updateDto });
-        // await sheetStore.updateRecords([updateDto]);
-        // console.log('[univer-events] UPDATE: success for row', row, 'ID', idNum);
-        // if (sheetStore.loading === false) highlightRow(aws, row);
-        let updRes: any
-        try {
-          updRes = await sheetStore.updateRecords([updateDto])
-
-          if (col === 7) {
-            const msg = getOperationErrorMessage(updRes)
-            if (msg) {
-              await handleClientColumnError(msg)
-              return
-            }
-          }
-          console.log('[univer-events] UPDATE: success for row', row, 'ID', idNum)
-          if (sheetStore.loading === false) highlightRow(aws, row)
-        } catch (e) {
-          if (col === 7) {
-            const msg = getOperationErrorMessage(e)
-            if (msg) {
-              await handleClientColumnError(msg)
-              return
-            }
-          }
-          console.error('[univer-events] UPDATE failed for row', row, ':', e)
-        }
+        console.log('[univer-events] UPDATE: sending updateRecords', { listName, idNum, updateDto });
+        await sheetStore.updateRecords([updateDto]);
+        console.log('[univer-events] UPDATE: success for row', row, 'ID', idNum);
+        if (sheetStore.loading === false) highlightRow(aws, row);
       } catch (e) {
         console.error('[univer-events] UPDATE failed for row', row, ':', e);
         // Optionally show an error toast here
@@ -736,99 +658,172 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
   });
 
+  const univerStore = useUniverStore()
+
+const offValueChanged = univerAPI.addEvent(univerAPI.Event.SheetValueChanged, async (params: any) => {
+  // гейт: загрузка / «тихий режим»
+  if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return
+
+  const wb = univerAPI.getActiveWorkbook()
+  const ws = wb?.getActiveSheet()
+  const sheet = ws?.getSheet()
+  if (!wb || !ws || !sheet) return
+
+  // активный лист
+  const activeSheetId = sheet.getSheetId?.()
+  const subUnitId = params?.subUnitId ?? params?.payload?.params?.subUnitId
+  if (activeSheetId && subUnitId && subUnitId !== activeSheetId) return
+
+  // новые значения из payload
+  const cv: Record<string, Record<string, any>> | undefined =
+    params?.cellValue ?? params?.payload?.params?.cellValue
+  if (!cv || typeof cv !== 'object') return
+
+  // row0 -> Set<col0> (только ячейки с 'v', не стили; без заголовка и без ID-колонки)
+  const perRow = new Map<number, Set<number>>()
+  for (const rk of Object.keys(cv)) {
+    const rowObj = cv[rk]; if (!rowObj) continue
+    for (const ck of Object.keys(rowObj)) {
+      const cell = rowObj[ck]
+      if (!cell || !Object.prototype.hasOwnProperty.call(cell, 'v')) continue
+      const row0 = Number(rk), col0 = Number(ck)
+      if (!Number.isFinite(row0) || !Number.isFinite(col0)) continue
+      if (row0 <= 0) continue
+      if (col0 === 27) continue
+      ;(perRow.get(row0) ?? perRow.set(row0, new Set()).get(row0)!).add(col0)
+    }
+  }
+  if (perRow.size === 0) return
+
+  const listName = sheet.getName?.() || ''
+  const store = useSheetStore()
+
+  // mapper: достаём «старое» значение из store по колонке
+  const getOld = (rec: TransportAccounting, col0: number): any => {
+    switch (col0) {
+      case 0:  return rec.dateOfPickup
+      case 1:  return rec.numberOfContainer
+      case 2:  return rec.cargo
+      case 3:  return rec.typeOfContainer
+      case 4:  return rec.dateOfSubmission
+      case 5:  return rec.addressOfDelivery
+      case 6:  return rec.ourFirm
+      case 7:  return rec.client
+      case 8:  return rec.formPayAs
+      case 9:  return rec.summa
+      case 10: return rec.numberOfBill
+      case 11: return rec.dateOfBill
+      case 12: return rec.datePayment
+      case 13: return rec.contractor
+      case 14: return rec.driver
+      case 15: return rec.formPayHim
+      case 16: return rec.contractorRate
+      case 17: return rec.sumIssued
+      case 18: return rec.numberOfBillAdd
+      case 19: return rec.dateOfPaymentContractor
+      case 20: return rec.manager
+      case 21: return rec.departmentHead
+      case 22: return rec.clientLead
+      case 23: return rec.salesManager
+      case 24: return rec.additionalExpenses
+      case 25: return rec.income
+      case 26: return rec.incomeLearned
+      default: return ''
+    }
+  }
+
+  // помощник: есть ли данные в строке (кроме ID)
+  const rowHasData = (rv: any[]): boolean => {
+    for (let c = 0; c <= 26; c++) {
+      const cell = rv?.[c]
+      const v = cell && typeof cell === 'object' && 'v' in cell ? cell.v : cell
+      if (String(v ?? '').trim() !== '') return true
+    }
+    return false
+  }
+
+  // 1) решаем, какие строки менять:
+  //  - если prevRec есть → сравниваем payload vs store
+  //  - если prevRec нет → считаем «есть изменения», если в payload есть непустые значения
+  const rowsToProcess: number[] = []
+  for (const [row0, cols] of perRow) {
+    const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined
+    const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined
+
+    if (!prevRec) {
+      // кандидат на create: есть ли среди payload-значений «не пустые»?
+      let hasNonEmpty = false
+      for (const col0 of cols) {
+        const v = cv[String(row0)]?.[String(col0)]?.v
+        if (String(v ?? '').trim() !== '') { hasNonEmpty = true; break }
+      }
+      if (hasNonEmpty) rowsToProcess.push(row0)
+      continue
+    }
+
+    // кандидат на update: есть ли реальная разница
+    let changed = false
+    for (const col0 of cols) {
+      const newVal = cv[String(row0)]?.[String(col0)]?.v
+      const newStr = String(newVal ?? '').trim()
+      const oldStr = String(getOld(prevRec, col0) ?? '').trim()
+      if (newStr !== oldStr) { changed = true; break }
+    }
+    if (changed) rowsToProcess.push(row0)
+  }
+  if (!rowsToProcess.length) return
+
+  // 2) собираем DTO: читаем строку из листа и патчим payload-значениями
+  const createDtos: any[] = []
+  const updateDtos: any[] = []
+
+  for (const row0 of rowsToProcess) {
+    const rowVals = ws.getRange(row0, 0, 1, 28).getValues()?.[0] ?? []
+
+    const cols = perRow.get(row0)!
+    for (const col0 of cols) {
+      const vFromPayload = cv[String(row0)]?.[String(col0)]?.v
+      if (rowVals[col0] && typeof rowVals[col0] === 'object' && 'v' in rowVals[col0]) {
+        rowVals[col0].v = vFromPayload
+      } else {
+        rowVals[col0] = { v: vFromPayload }
+      }
+    }
+
+    const idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim()
+    const idNum = Number(idStr)
+
+    if (Number.isFinite(idNum) && idNum > 0) {
+      updateDtos.push({ ...buildSR(rowVals, listName, idNum), id: idNum })
+    } else {
+      if (rowHasData(rowVals)) {
+        try { store.anchorCreateRow?.(listName, row0) } catch {}
+        createDtos.push(buildSR(rowVals, listName))
+      }
+    }
+  }
+  if (!createDtos.length && !updateDtos.length) return
+
+  // 3) применяем
+  try {
+    if (createDtos.length) await store.addRecords(createDtos)
+    if (updateDtos.length) await store.updateRecords(updateDtos)
+
+    const aws = wb.getActiveSheet()
+    for (const r of rowsToProcess) highlightRow(aws, r)
+  } catch (e) {
+    console.error('[SheetValueChanged] create/update failed:', e)
+  }
+})
+
+
+
+
   // Return disposer to allow cleanup by caller if needed
   return () => {
     try { (offEditEnded as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offEditEnded', e); }
     try { (offBeforePaste as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offBeforePaste', e); }
     try { (offPasted as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offPasted', e); }
+    try { (offValueChanged as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offValueChanged', e); }
   };
-}
-
-export type DropdownCtx = {
-    row: number;
-    column: number;
-    letter: string;
-    value: unknown;
-    api: FUniver;
-    sheet: FWorksheet;
-}
-
-type ApplyUpdatesFn = (updates: Array<{ row: number; column: number; value: any }>) => void
-type DropdownHandler = (ctx: DropdownCtx, apply: ApplyUpdatesFn) => void
-
-export function registerDropdownValueChanged(
-  api: FUniver,
-  sheet: FWorksheet,
-  handlers: Record<string, DropdownHandler>,
-) {
-  let internalWrite = false
-
-  const colLetter = (col: number) => {
-    let n = col, s = '';
-    while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = (n - 1) / 26; }
-    return s;
-  }
-
-  const applyUpdates: ApplyUpdatesFn = (updates) => {
-    if (!updates?.length) return 
-    internalWrite = true 
-    try {
-      for (const u of updates) {
-        sheet.getRange(u.row, u.column).setValue(u.value)
-      } 
-    } finally {
-      internalWrite = false
-    }
-  }
-
-  const processOne = (r: number, c: number) => {
-    if (r < 1 || c < 1) return
-    const range = sheet.getRange(r, c)
-    const value = 
-      typeof range.getRawValue === 'function' ? range.getRawValue() :
-      typeof range.getValue === 'function' ? range.getValue() : undefined
-    
-    const letter = (() => {
-      if (typeof range.getA1Notation === 'function') {
-        return range.getA1Notation().replace(/\d+/g, '')
-      }
-      return colLetter(c)
-    })() 
-
-    const handler = handlers[letter]
-    if (!handler) return
-
-    const ctx: DropdownCtx = { row: r, column: c, letter, value, api, sheet }
-    handler(ctx, applyUpdates)
-  }
-
-  api.addEvent(api.Event.SheetValueChanged, (ev: any) => {
-    if (internalWrite) return 
-
-    if (ev?.subUnitId && typeof sheet.getSheetId === 'function') {
-      if (ev.subUnitId !== sheet.getSheetId()) return
-    }
-
-    if (Array.isArray(ev?.changes)) {
-      for (const ch of ev.changes) {
-        processOne(ch.row, ch.column)
-      }
-      return
-    }
-
-    if (Number.isInteger(ev?.row) && Number.isInteger(ev?.column)) {
-      processOne(ev.row, ev.column)
-      return
-    }
-
-    if (Array.isArray(ev?.ranges)) {
-      for (const rg of ev.ranges) {
-        const sr = rg.startRow, er = rg.endRow, sc = rg.startColumn, ec = rg.endColumn
-        for (let r1 = sr; r1 <= er; r1++) for (let c1 = sc; c1 <= ec; c1++) processOne(r1, c1)
-      }
-      return
-    }
-  })
-  
-  return { applyUpdates }
 }

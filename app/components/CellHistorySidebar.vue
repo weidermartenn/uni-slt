@@ -8,35 +8,9 @@
         <h2 class="text-sm font-semibold tracking-tight">История изменений</h2>
         <div class="flex items-center gap-2 text-xs">
           <span
-            class="inline-flex items-center gap-1 rounded-full border px-2 py-1 bg-zinc-50 dark:bg-zinc-800"
+            class="inline-flex items-center gap-1 rounded-full border border-zinc-100 dark:border-zinc-800 px-2 py-1 bg-zinc-50 dark:bg-zinc-800"
           >
             <span class="font-mono font-medium">{{ meta?.a1 || "—" }}</span>
-          </span>
-        </div>
-      </div>
-      <div class="flex items-center justify-between gap-2 mt-2">
-        <h2 class="text-sm font-semibold tracking-tight">Автор изменений</h2>
-        <div class="flex items-center gap-2 text-xs">
-          <span
-            class="inline-flex items-center gap-1 rounded-full border px-2 py-1 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="lucide lucide-circle-user-icon lucide-circle-user"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <circle cx="12" cy="10" r="3" />
-              <path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662" />
-            </svg>
-            <span class="font-mono font-medium">Неизвестный пользователь</span>
           </span>
         </div>
       </div>
@@ -48,14 +22,14 @@
               v-model.trim="q"
               type="text"
               placeholder="Поиск по значениям…"
-              class="w-full h-9 rounded-md border px-3 pr-8 text-sm bg-white dark:bg-zinc-900"
+              class="w-full h-9 rounded-md border border-zinc-100 dark:border-zinc-800 px-3 pr-8 text-sm bg-white dark:bg-zinc-900"
             />
           </div>
         </div>
         <div class="flex items-center gap-2">
           <select
             v-model="order"
-            class="h-9 w-full rounded-md border px-2 text-sm bg-white dark:bg-zinc-900"
+            class="h-9 w-full rounded-md border border-zinc-100 dark:border-zinc-800 px-2 text-sm bg-white dark:bg-zinc-900"
           >
             <option value="desc">Сначала новые</option>
             <option value="asc">Сначала старые</option>
@@ -79,15 +53,10 @@
         <li
           v-for="item in filtered"
           :key="item.id"
-          class="group rounded-xl border bg-white/60 dark:bg-zinc-900/60 backdrop-blur p-3 hover:shadow-sm transition"
+          class="group rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-white/70 shadow-md dark:bg-zinc-900/60 backdrop-blur p-3 hover:shadow-sm transition"
         >
           <div class="flex items-center justify-between gap-3">
             <div class="flex items-center gap-2">
-              <span
-                class="inline-flex h-6 items-center rounded-md border px-2 text-xs font-mono"
-              >
-                #{{ item.id }}
-              </span>
               <span class="text-xs text-zinc-500">{{
                 formatFull(item.date)
               }}</span>
@@ -96,16 +65,46 @@
               >
             </div>
             <button
-              class="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded-md border hover:bg-zinc-50 dark:hover:bg-zinc-800 transition"
+              class="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded-md border border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition"
               @click="copyDiff(item)"
               title="Скопировать строку"
             >
               Скопировать
             </button>
           </div>
+          <div class="flex items-center justify-between gap-2 mt-2">
+            <h2 class="text-sm font-semibold tracking-tight">
+              Автор изменений
+            </h2>
+            <div class="flex items-center gap-2 text-xs">
+              <span
+                class="inline-flex items-center gap-1 rounded-full border border-zinc-100 dark:border-zinc-800 px-2 py-1 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="lucide lucide-circle-user-icon lucide-circle-user"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <circle cx="12" cy="10" r="3" />
+                  <path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662" />
+                </svg>
+                <span class="font-mono font-medium"
+                  >{{ item.authorName}}</span
+                >
+              </span>
+            </div>
+          </div>
           <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
             <div
-              class="rounded-lg border p-2 bg-zinc-50/60 dark:bg-zinc-800/60"
+              class="rounded-lg border border-zinc-100 dark:border-zinc-800 p-2 bg-zinc-50/60 dark:bg-zinc-800/60"
             >
               <div class="text-[11px] uppercase tracking-wide text-zinc-500">
                 Было
@@ -115,7 +114,7 @@
               </div>
             </div>
             <div
-              class="rounded-lg border p-2 bg-emerald-50/60 dark:bg-emerald-900/20"
+              class="rounded-lg border border-zinc-100 dark:border-zinc-800 p-2 bg-emerald-50/60 dark:bg-emerald-900/20"
             >
               <div class="text-[11px] uppercase tracking-wide text-zinc-500">
                 Стало
@@ -150,6 +149,7 @@ const entries = computed(
     store.cellHistoryList as Array<{
       id: number;
       date: string;
+      authorName: string;
       dataBefore?: string;
       dataAfter?: string;
     }>
