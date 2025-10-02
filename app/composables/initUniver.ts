@@ -20,6 +20,7 @@ import type { FWorksheet } from '@univerjs/preset-sheets-core';
 import { getUser } from '~/helpers/getUser';
 import UpdateHistoryButtonIcon from '~/univer/custom-menu/components/button-icon/UpdateHistoryButtonIcon.vue';
 import { useUniverStore } from '~/stores/univer-store';
+import CellHistorySidebar from '~/components/CellHistorySidebar.vue';
 
 const tr = ref<number>(0);
 
@@ -101,6 +102,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   univerAPI.registerComponent('BidButtonIcon', BidButtonIcon, { framework: 'vue3' });
   univerAPI.registerComponent('AgreementButtonIcon', AgreementButtonIcon, { framework: 'vue3' });
   univerAPI.registerComponent('UpdateHistoryButtonIcon', UpdateHistoryButtonIcon, { framework: 'vue3' });
+  univerAPI.registerComponent('CellHistorySidebar', CellHistorySidebar, { framework: 'vue3' });
 
   // ---------- helpers ----------
   const lettersToIndex = (s: string): number => {
