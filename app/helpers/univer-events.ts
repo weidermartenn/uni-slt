@@ -1,829 +1,400 @@
-import type { FUniver } from '@univerjs/presets';
-import { useSheetStore } from '~/stores/sheet-store'; // Assuming this is a Pinia store or similar for reactivityAssuming a composable for toast notifications
-import { getUser } from './getUser';
-import { useUniverStore } from '~/stores/univer-store';
-import type { TransportAccounting } from '~/entities/TransportAccountingDto/types';
+// univer-events.ts
+import type { FUniver } from '@univerjs/presets'
+import { useToast } from '#imports'
+import { useSheetStore } from '~/stores/sheet-store'
+import { useUniverStore } from '~/stores/univer-store'
+import { getUser } from './getUser'
+import type { TransportAccounting } from '~/entities/TransportAccountingDto/types'
 
-// Centralized Univer event registrations
 export function registerUniverEvents(univerAPI: FUniver) {
-  // Date columns: A, E, L, M, T -> indices 0, 4, 11, 12, 19
-  const dateCols = new Set([0, 4, 11, 12, 19]);
-
-  // Columns locked for managers (static list)
-  const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27]);
-
-  // Track rows where we already sent "add" to backend to avoid duplicates before socket response
-  const requestedRows = new Set<string>();
-  let batchPasteInProgress = false; // Flag to indicate if a paste operation is in progress
-
-  // Lazy user fetch + helpers
-  let cachedMe: any | undefined;
-  const getMe = async () => {
-    if (cachedMe !== undefined) return cachedMe;
-    cachedMe = getUser()
-    return cachedMe;
-  };
-
-  /**
-   * Converts an Excel-style column letter (e.g., 'A', 'B') to a 0-based column index.
-   * @param letter The column letter.
-   * @returns The 0-based column index.
-   */
-  const letterToColumnIndex = (letter: string): number => {
-    return letter.charCodeAt(0) - 'A'.charCodeAt(0);
-  };
-
-  /**
-   * Checks if a specific cell is locked for the manager role based on static and dynamic rules.
-   * @param listName The name of the current sheet.
-   * @param row The 0-based row index.
-   * @param col The 0-based column index.
-   * @param store The sheet store containing records.
-   * @returns True if the cell is locked for the manager, false otherwise.
-   */
-  const isCellLockedForManager = (
-    listName: string,
-    row: number,
-    col: number,
-    store: ReturnType<typeof useSheetStore>
-  ): boolean => {
-    // Header row is never locked
-    if (row <= 0) return false;
-
-    // 1. Check static list of locked columns
-    if (MANAGER_LOCKED_COLUMNS.has(col)) {
-      return true;
-    }
-
-    // Column 0 (first column) is never locked by dynamic rules
-    if (col === 0) return false;
-
-    // 2. Check dynamic rules from the record itself
-    const items = (store.records as any)?.[listName] as any[] | undefined;
-    const rec = Array.isArray(items) ? items[row - 1] : undefined; // Assuming records array is 0-indexed and corresponds to 1-indexed sheet rows
-    if (!rec || !rec.managerBlockListCell) return false;
-
-    for (const range of rec.managerBlockListCell) {
-      if (!range || range.length === 0) continue;
-
-      if (range.length === 1 && typeof range[0] === 'string') {
-        if (letterToColumnIndex(range[0]) === col) return true;
-      } else if (range.length >= 2 && typeof range[0] === 'string' && typeof range[1] === 'string') {
-        const start = letterToColumnIndex(range[0]);
-        const end = letterToColumnIndex(range[1]);
-        if (col >= start && col <= end) return true;
-      }
-    }
-
-    return false;
-  };
-
-  /**
-   * Recursively unwraps a Univer cell value object to its raw value.
-   * @param x The raw cell value or a Univer value object.
-   * @returns The unwrapped raw value.
-   */
-  const unwrapV = (x: any): any => (x && typeof x === 'object' && 'v' in x) ? unwrapV((x as any).v) : x;
-
-  /**
-   * Extracts and normalizes the string representation of a cell value, handling rich-text.
-   * @param raw The raw cell value from Univer.
-   * @returns The trimmed string representation of the cell value.
-   */
-  const toStr = (raw: any): string => {
-    const val = unwrapV(raw);
-    if (val == null) return '';
-    if (typeof val === 'object') {
-      // Handle rich-text cases: { t: string } or { p: segments }
-      if (typeof (val as any).t === 'string') return (val as any).t.trim();
-      const p = (val as any).p;
-      if (Array.isArray(p)) {
-        return p.map((seg: any) => {
-          const s = seg?.s;
-          if (s && typeof s === 'object' && 'v' in s) return String(unwrapV(s.v));
-          return String(unwrapV(s));
-        }).join('').trim();
-      }
-      return '';
-    }
-    return String(val).trim();
-  };
-
-  /**
-   * Extracts and normalizes a date string from various formats to 'YYYY-MM-DD'.
-   * @param raw The raw cell value that might contain a date string.
-   * @returns The normalized date string 'YYYY-MM-DD' or null if not a valid date.
-   */
-  const normalizeDateInput = (raw: any): string | null => {
-    const str = toStr(raw);
-    if (!str) return null;
-
-    // ISO format: YYYY-MM-DD
-    const iso = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-
-    // Dot format: DD.MM.YYYY
-    const dot = str.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-    if (dot) {
-      const [, dd, mm, yyyy] = dot;
-      return `${yyyy}-${mm}-${dd}`;
-    }
-
-    // Try parsing with Date object as a last resort for other formats, then reformat
-    try {
-      const date = new Date(str);
-      if (!isNaN(date.getTime())) {
-        return date.toISOString().split('T')[0];
-      }
-    } catch (e) {
-      // Ignore parsing errors
-    }
-
-    return null;
-  };
-
-  /**
-   * Briefly highlights a row with a light-green theme style.
-   * @param aws The active Univer worksheet.
-   * @param row The 0-based row index to highlight.
-   */
-  const highlightRow = (aws: any, row: number) => {
-    try {
-      // Assuming a fixed range for highlighting (e.g., first 28 columns)
-      const range = aws.getRange(row, 0, 1, 28);
-      range.useThemeStyle('light-green');
-      const currentTheme = range.getUsedThemeStyle(); // Get the applied theme to remove it later
-      setTimeout(() => {
-        try { range.removeThemeStyle(currentTheme); } catch (e) { console.warn('[univer-events] removeThemeStyle failed', e); }
-      }, 1000);
-    } catch (e) {
-      console.warn('[univer-events] highlightRow failed', e);
-    }
-  };
-
-  /**
-   * Builds a service record (SR) DTO from an array of row values.
-   * @param rowVals An array of cell values for a specific row.
-   * @param listName The name of the sheet.
-   * @param id Optional ID for existing records.
-   * @returns The SR DTO object.
-   */
-  const buildSR = (rowVals: any[], listName: string, id: number = 0): any => {
-    // Helper to safely get string value from rowVals
-    const getVal = (index: number) => toStr(rowVals[index]);
-
-    return {
-      additionalExpenses: getVal(24),
-      addressOfDelivery: getVal(5),
-      cargo: getVal(2),
-      client: getVal(7),
-      clientLead: getVal(22),
-      contractor: getVal(13),
-      contractorRate: getVal(16),
-      dateOfBill: getVal(11),
-      dateOfPaymentContractor: getVal(19),
-      dateOfPickup: getVal(0),
-      dateOfSubmission: getVal(4),
-      datePayment: getVal(12),
-      departmentHead: getVal(21),
-      driver: getVal(14),
-      formPayAs: getVal(8),
-      formPayHim: getVal(15),
-      id, // ID will be added/updated during the request (don't set here for creation)
-      listName,
-      income: getVal(25),
-      incomeLearned: getVal(26),
-      manager: getVal(20),
-      numberOfBill: getVal(10),
-      numberOfBillAdd: getVal(18),
-      numberOfContainer: getVal(1),
-      ourFirm: getVal(6),
-      salesManager: getVal(23),
-      sumIssued: getVal(17),
-      summa: getVal(9),
-      taxes: '', // Taxes is missing from rowVals based on column mapping
-      typeOfContainer: getVal(3),
-    };
-  };
-
-  /**
-   * Handles individual cell changes, including date validation and record creation/update.
-   * @param row The 0-based row index of the changed cell.
-   * @param col The 0-based column index of the changed cell.
-   */
-  const handleRowChange = async (row: number, col: number) => {
-    const wb = univerAPI.getActiveWorkbook();
-    if (!wb) { console.warn('[univer-events] No active workbook.'); return; }
-
-    const aws = wb.getActiveSheet();
-    const s = aws?.getSheet();
-    if (!s) { console.warn('[univer-events] No active sheet.'); return; }
-
-    if (row === 0) { console.log('[univer-events] Skip header row for change detection.'); return; }
-
-    const a1 = aws.getRange(row, col).getA1Notation();
-    console.log('[univer-events] Row change detected:', { a1, row, col });
-
-    const listName = s.getName();
-    const sheetStore = useSheetStore();
-
-    // 1) Validate and normalize date inputs on specific columns
-    if (dateCols.has(col)) {
-      const cellValue = s.getCell(row, col);
-      console.log('[univer-events] Date column change:', { a1, raw: cellValue });
-      const normalizedDate = normalizeDateInput(cellValue);
-      if (!normalizedDate) {
-        console.warn('[univer-events] Invalid date format, attempting undo:', { a1, value: cellValue });
-        await univerAPI.undo(); // Undo the invalid input
-        try {
-          const toast = useToast();
-          toast.add({
-            title: 'Значение не в формате даты',
-            description: `В ячейке ${a1} значение не является датой.\nИспользуйте формат "YYYY-MM-DD" или "dd.mm.yyyy"`,
-            color: 'error',
-            duration: 3000,
-          });
-        } catch (e) { console.error('Failed to show toast:', e); }
-        // Optimization: If date is invalid, prevent further processing of this cell
-        return;
-      } else {
-        // If date is valid but was in a different format, normalize it in the sheet
-        const currentCellValue = toStr(cellValue);
-        if (currentCellValue !== normalizedDate) {
-          console.log('[univer-events] Date normalized in sheet:', { a1, normalizedDate });
-          const range = aws.getRange(row, col);
-          range.setValue({ v: normalizedDate });
-        }
-      }
-    }
-
-    // 2) Create or update logic based on ID cell
-    try {
-      // Read the full row for processing
-      const rowVals = aws.getRange(row, 0, 1, 28).getValues()?.[0] ?? [];
-      const idCellStr = toStr(rowVals[27]); // ID column is 27
-
-      const key = `${listName}#${row}`;
-      console.log('[univer-events] Row audit for record:', { listName, row, idCellStr, key });
-
-      // Check if the row has any data in the relevant columns (0-26)
-      let hasData = false;
-      for (let c = 0; c <= 26; c++) {
-        if (toStr(rowVals[c])) {
-          hasData = true;
-          break;
-        }
-      }
-      if (!hasData && !idCellStr) { // Only skip if no data AND no ID (i.e., truly empty new row)
-        console.log('[univer-events] Row has no data and no ID, skipping:', { listName, row });
-        return;
-      }
-
-      // Case A: id empty -> create new record
-      if (!idCellStr) {
-        if (requestedRows.has(key)) {
-          console.log('[univer-events] Skipping: create request already in-flight for key', key);
-          return;
-        }
-
-        const dto = buildSR(rowVals, listName);
-        console.log('[univer-events] CREATE: sending addRecords', { listName, key, dto });
-        requestedRows.add(key); // Mark as in-flight
-        try {
-          sheetStore.anchorCreateRow(listName, row)
-          await sheetStore.addRecords([dto]);
-          console.log('[univer-events] CREATE: request sent, awaiting socket update for row', row);
-          // Highlight immediately if not loading (visual feedback)
-          if (sheetStore.loading === false) highlightRow(aws, row);
-        } catch (e) {
-          console.error('[univer-events] CREATE failed for row', row, ':', e);
-          // Optionally show an error toast here
-        } finally {
-          requestedRows.delete(key); // Remove from in-flight
-          console.log('[univer-events] CREATE: cleanup request flag for row', key);
-        }
-        return;
-      }
-
-      // Case B: id present -> update existing record
-      try {
-        const idNum = Number(idCellStr);
-        if (!Number.isFinite(idNum) || idNum <= 0) { // ID must be a positive number
-          console.log('[univer-events] UPDATE: ID is not numeric or invalid, skipping:', { idCellStr, row });
-          return;
-        }
-
-        const updateDto = {
-          ...buildSR(rowVals, listName, idNum),
-          id: idNum, // Ensure ID is explicitly set for update
-        };
-        console.log('[univer-events] UPDATE: sending updateRecords', { listName, idNum, updateDto });
-        await sheetStore.updateRecords([updateDto]);
-        console.log('[univer-events] UPDATE: success for row', row, 'ID', idNum);
-        if (sheetStore.loading === false) highlightRow(aws, row);
-      } catch (e) {
-        console.error('[univer-events] UPDATE failed for row', row, ':', e);
-        // Optionally show an error toast here
-      }
-    } catch (e) {
-      console.error('[univer-events] handleRowChange handler failed for row', row, ':', e);
-    }
-  };
-
-  // Event listener for when a cell edit ends
-  const offEditEnded = univerAPI.addEvent(univerAPI.Event.SheetEditEnded, async (params: any) => {
-    // If a batch paste is in progress, individual cell changes from paste should be ignored
-    if (batchPasteInProgress) {
-      console.log('[univer-events] SheetEditEnded ignored due to batchPasteInProgress.');
-      return;
-    }
-
-    const { row, column: col } = params; // Univer uses 'column' for 0-based column index
-
-    const me = await getMe();
-    const isManager = me?.roleCode === 'ROLE_MANAGER';
-    const sheetStore = useSheetStore();
-    const wb = univerAPI.getActiveWorkbook();
-    const aws = wb?.getActiveSheet();
-    const s = aws?.getSheet();
-
-    if (!s) { console.warn('[univer-events] SheetEditEnded: No active sheet.'); return; }
-    if (row === 0) { console.log('[univer-events] SheetEditEnded: Skip header row.'); return; }
-
-    const listName = s.getName();
-
-    // Manager lock check
-    if (isManager && isCellLockedForManager(listName, row, col, sheetStore)) {
-      console.warn('[univer-events] Manager attempted to edit locked cell:', { listName, row, col });
-      await univerAPI.undo(); // Undo manager's edit
-      try {
-        const toast = useToast();
-        toast.add({
-          title: 'Ячейка заблокирована',
-          description: 'Редактирование этой ячейки запрещено для вашей роли.',
-          color: 'warning',
-          duration: 2500,
-        });
-      } catch (e) { console.error('Failed to show toast:', e); }
-      return;
-    }
-
-    // const isAdminOrBuh = me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH'
-    // if (isAdminOrBuh && (col === 25 || col === 26 || col === 27) && row > 0) {
-    //   const newVal = s.getCell(row, col)
-    //   if (toStr(newVal)) {
-    //     await univerAPI.undo();
-    //     try {
-    //       const toast = useToast();
-    //       toast.add({
-    //         title: 'Ячейка заблокирована',
-    //         description: 'Редактирование этой ячейки запрещено для вашей роли.',
-    //         color: 'warning',
-    //         duration: 2500,
-    //       })
-    //     } catch {}  
-    //   }
-    //   return
-    // }
-
-    await handleRowChange(row, col);
-  });
-
-  // Helper to normalize numeric strings (remove spaces, replace comma with dot)
-  const normalizeNumberStr = (raw: any): string => {
-    const s = (raw ?? '').toString();
-    if (!s) return '';
-    return s.replace(/\s+/g, '').replace(',', '.');
-  };
-
-  // Pre-paste event handling for data normalization (dates, numbers)
-  const offBeforePaste = univerAPI.addEvent(univerAPI.Event.BeforeClipboardPaste, async (params: any) => {
-    batchPasteInProgress = true; // Set flag at the start of paste operation
-
-    const wb = univerAPI.getActiveWorkbook();
-    const aws = wb?.getActiveSheet();
-    // Get the start column of the active selection where paste will begin
-    const startCol = aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0;
-
-    // Columns that should be treated as numeric
-    const numericCols = new Set([9, 16, 17, 24, 25, 26]);
-
-    let changed = false; // Flag to indicate if any data was modified
-
-    // Function to apply normalization rules to a single cell value
-    const normalizeCellValue = (val: any, absColIndex: number): any => {
-      if (dateCols.has(absColIndex)) {
-        return normalizeDateInput(val) ?? val; // Keep original if date is invalid after normalization
-      }
-      if (numericCols.has(absColIndex)) {
-        return normalizeNumberStr(val);
-      }
-      return val;
-    };
-
-    // 0) Plain text (tab-separated) normalization
-    if (typeof (params as any)?.text === 'string') {
-      const rows = ((params as any).text as string).split(/\r?\n/);
-      const normRows = rows.map((line: string) => {
-        if (!line) return line;
-        const cols = line.split('\t');
-        return cols
-          .map((cell, cIdx) => {
-            const absCol = startCol + cIdx;
-            const normalized = normalizeCellValue(cell, absCol);
-            if (normalized !== cell) changed = true;
-            return normalized;
-          })
-          .join('\t');
-      });
-      const nextText = normRows.join('\n');
-      if (nextText !== (params as any).text) {
-        (params as any).text = nextText;
-        changed = true;
-      }
-    }
-
-    // 1) Normalize HTML payload for dates (Univer might prefer HTML over text)
-    // This is a simple regex replacement for common date formats within HTML
-    if (typeof (params as any)?.html === 'string') {
-      const prevHtml = (params as any).html as string;
-      const nextHtml = prevHtml.replace(/\b(\d{2})\.(\d{2})\.(\d{4})\b/g, (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`);
-      if (nextHtml !== prevHtml) {
-        (params as any).html = nextHtml;
-        changed = true;
-      }
-    }
-
-    // 2) Normalize structured data (e.g., from other Univer sheets or Excel)
-    const data = (params as any)?.data ?? (params as any)?.clipboardData;
-    if (data) {
-      if (typeof data.html === 'string') {
-        const prevHtml = data.html as string;
-        const nextHtml = prevHtml.replace(/\b(\d{2})\.(\d{2})\.(\d{4})\b/g, (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`);
-        if (nextHtml !== prevHtml) { data.html = nextHtml; changed = true; }
-      }
-      if (Array.isArray(data.cells)) {
-        data.cells = data.cells.map((row: any[], rIdx: number) => Array.isArray(row)
-          ? row.map((cell: any, cIdx: number) => {
-              const absCol = startCol + cIdx;
-              const normalized = normalizeCellValue(cell, absCol);
-              if (normalized !== cell) changed = true;
-              return normalized;
-            })
-          : row);
-      }
-    }
-
-    // 3) Normalize directly provided cells array (another possible structure)
-    if (Array.isArray((params as any)?.cells)) {
-      (params as any).cells = (params as any).cells.map((row: any[], rIdx: number) => Array.isArray(row)
-        ? row.map((cell: any, cIdx: number) => {
-            const absCol = startCol + cIdx;
-            const normalized = normalizeCellValue(cell, absCol);
-            if (normalized !== cell) changed = true;
-            return normalized;
-          })
-        : row);
-    }
-
-    // Univer's paste mechanism might sometimes re-read the clipboard after BeforeClipboardPaste.
-    // If we modified `params.text` or `params.html`, Univer should use the modified version.
-    // If `params.cells` or `params.data.cells` were modified, Univer should use those for direct cell insertion.
-    // The `changed` flag indicates if any normalization occurred.
-    if (changed) {
-      console.log('[univer-events] BeforeClipboardPaste: Data normalized during paste preparation.');
-    }
-  });
-
-
-  // Event listener for after clipboard paste has completed
-  const offPasted = univerAPI.addEvent(univerAPI.Event.ClipboardPasted, async (params: any) => {
-    const wb = univerAPI.getActiveWorkbook();
-    const aws = wb?.getActiveSheet();
-    const s = aws?.getSheet();
-    if (!wb || !aws || !s) {
-      console.warn('[univer-events] ClipboardPasted: No active workbook or sheet.');
-      batchPasteInProgress = false; // Ensure flag is reset even on early exit
-      return;
-    }
-
-    try {
-      // Determine the actual pasted rectangle from the active selection *after* paste
-      const activeRange = aws.getSelection()?.getActiveRange?.()?.getRange();
-      if (!activeRange) {
-        console.warn('[univer-events] ClipboardPasted: No active range after paste.');
-        return;
-      }
-
-      const startRow = activeRange.startRow;
-      const endRow = activeRange.endRow;
-      const startCol = activeRange.startColumn;
-      const endCol = activeRange.endColumn;
-
-      const listName = s.getName();
-      const sheetStore = useSheetStore();
-
-      // Prevent paste into dynamically locked rows for managers
-      const me = await getMe();
-      const isManager = me?.roleCode === 'ROLE_MANAGER';
-      if (isManager) {
-        for (let r = Math.max(1, startRow); r <= endRow; r++) { // Iterate from row 1 (skipping header)
-          // Simplified check: if any cell in the pasted row is locked, prevent paste for the whole row
-          // This check is very broad, consider if only the *actually pasted* cells need to be checked
-          // For now, checking column 0 for a general row lock, then checking relevant pasted columns.
-          let rowIsLocked = false;
-          for (let c = startCol; c <= endCol; c++) {
-            if (isCellLockedForManager(listName, r, c, sheetStore)) {
-              rowIsLocked = true;
-              break;
-            }
-          }
-
-          if (rowIsLocked) {
-            console.warn('[univer-events] Manager attempted to paste into a locked row/cell:', { listName, row: r, startCol, endCol });
-            await univerAPI.undo(); // Undo the entire paste operation
-            try {
-              const toast = useToast();
-              toast.add({
-                title: 'Строка/Ячейка заблокирована',
-                description: 'Вставка запрещена в заблокированную строку или ячейку.',
-                color: 'warning',
-                duration: 3500,
-              });
-            } catch (e) { console.error('Failed to show toast:', e); }
-            return; // Abort all further processing
-          }
-        }
-      }
-
-      // Re-normalize pasted cells in-place on the UI after paste (as BeforePaste might not catch all cases or Univer might re-render)
-      const numericCols = new Set([9, 16, 17, 24, 25, 26]);
-
-      // Iterate over the pasted range, starting from row 1 (skipping header if paste started there)
-      const actualStartRow = Math.max(1, startRow);
-      const rowsToProcess = endRow - actualStartRow + 1;
-      const colsToProcess = endCol - startCol + 1;
-
-      if (rowsToProcess > 0 && colsToProcess > 0) {
-        const block = aws.getRange(actualStartRow, startCol, rowsToProcess, colsToProcess);
-        const values = block.getValues(); // Get current values from the sheet
-
-        for (let r = 0; r < rowsToProcess; r++) {
-          const rowValues = values[r];
-          if (!rowValues) continue;
-          for (let c = 0; c < colsToProcess; c++) {
-            const absCol = startCol + c;
-            let cellValue = rowValues[c]; // Get the value that was actually pasted/is in the sheet now
-
-            if (cellValue == null) continue;
-
-            const originalStr = toStr(cellValue); // Get string representation for comparison
-
-            if (dateCols.has(absCol)) {
-              const normalizedDate = normalizeDateInput(originalStr);
-              if (normalizedDate && originalStr !== normalizedDate) {
-                rowValues[c] = { v: normalizedDate }; // Update with normalized date object
-              }
-            } else if (numericCols.has(absCol)) {
-              const normalizedNumber = normalizeNumberStr(originalStr);
-              if (originalStr !== normalizedNumber) {
-                rowValues[c] = { v: normalizedNumber }; // Update with normalized number object
-              }
-            }
-          }
-        }
-        // Set values back to the sheet only if changes were made
-        block.setValues(values); // This will update the UI with normalized values
-      }
-
-      // Collect rows to create/update
-      const createDtos: any[] = [];
-      const updateDtos: any[] = [];
-
-      for (let r = actualStartRow; r <= endRow; r++) {
-        const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []; // Read full row for DTO
-        const idStr = toStr(rowVals[27]);
-
-        // Check if the row has any data in columns 0-26 (excluding ID column for "hasData" check for new rows)
-        let hasData = false;
-        for (let c = 0; c <= 26; c++) {
-          if (toStr(rowVals[c])) {
-            hasData = true;
-            break;
-          }
-        }
-
-        if (!hasData && !idStr) { // If no data and no ID, skip this row (likely an empty row in pasted range)
-          continue;
-        }
-
-        if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
-          // Existing record: update
-          const idNum = Number(idStr);
-          const updateDto = buildSR(rowVals, listName, idNum);
-          updateDtos.push(updateDto);
-        } else if (hasData) {
-          // New record: create
-          const createDto = buildSR(rowVals, listName);
-          createDtos.push(createDto);
-        }
-      }
-
-      if (createDtos.length) {
-        console.log('[univer-events] PASTE: Sending addRecords batch', { count: createDtos.length, createDtos });
-        await sheetStore.addRecords(createDtos);
-      }
-
-      if (updateDtos.length) {
-        console.log('[univer-events] PASTE: Sending updateRecords batch', { count: updateDtos.length, updateDtos });
-        await sheetStore.updateRecords(updateDtos);
-      }
-
-      if (createDtos.length || updateDtos.length) {
-        // Highlight all affected rows briefly after processing
-        for (let r = actualStartRow; r <= endRow; r++) {
-          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
-          let hasDataAfterPaste = false;
-          for (let c = 0; c <= 26; c++) { if (toStr(rowVals[c])) { hasDataAfterPaste = true; break; } }
-          if (hasDataAfterPaste || toStr(rowVals[27])) { // Highlight if it has data or an ID
-            highlightRow(aws, r);
-          }
-        }
-      }
-    } catch (e) {
-      console.error('[univer-events] paste handler failed:', e);
-      // Optionally show a generic error toast
-    } finally {
-      batchPasteInProgress = false; // Reset flag after paste operation completes or fails
-    }
-  });
-
+  // ====== Константы/флаги ======
+  const dateCols = new Set([0, 4, 11, 12, 19]) // A,E,L,M,T (0-based)
+  const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27])
+  const requestedRows = new Set<string>()        // защита от двойного create
+  let batchPasteInProgress = false               // флаг периода вставки
+  const processingRows = new Set<string>()       // антидубль для SVC каскадов
   const univerStore = useUniverStore()
 
-const offValueChanged = univerAPI.addEvent(univerAPI.Event.SheetValueChanged, async (params: any) => {
-  // гейт: загрузка / «тихий режим»
-  if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return
-
-  const wb = univerAPI.getActiveWorkbook()
-  const ws = wb?.getActiveSheet()
-  const sheet = ws?.getSheet()
-  if (!wb || !ws || !sheet) return
-
-  // активный лист
-  const activeSheetId = sheet.getSheetId?.()
-  const subUnitId = params?.subUnitId ?? params?.payload?.params?.subUnitId
-  if (activeSheetId && subUnitId && subUnitId !== activeSheetId) return
-
-  // новые значения из payload
-  const cv: Record<string, Record<string, any>> | undefined =
-    params?.cellValue ?? params?.payload?.params?.cellValue
-  if (!cv || typeof cv !== 'object') return
-
-  // row0 -> Set<col0> (только ячейки с 'v', не стили; без заголовка и без ID-колонки)
-  const perRow = new Map<number, Set<number>>()
-  for (const rk of Object.keys(cv)) {
-    const rowObj = cv[rk]; if (!rowObj) continue
-    for (const ck of Object.keys(rowObj)) {
-      const cell = rowObj[ck]
-      if (!cell || !Object.prototype.hasOwnProperty.call(cell, 'v')) continue
-      const row0 = Number(rk), col0 = Number(ck)
-      if (!Number.isFinite(row0) || !Number.isFinite(col0)) continue
-      if (row0 <= 0) continue
-      if (col0 === 27) continue
-      ;(perRow.get(row0) ?? perRow.set(row0, new Set()).get(row0)!).add(col0)
+  // ====== Helpers ======
+  const unwrapV = (x: any): any => (x && typeof x === 'object' && 'v' in x ? unwrapV(x.v) : x)
+  const toStr = (raw: any): string => {
+    const val = unwrapV(raw)
+    if (val == null) return ''
+    if (typeof val === 'object') {
+      if (typeof (val as any).t === 'string') return (val as any).t.trim()
+      const p = (val as any).p
+      if (Array.isArray(p)) return p.map((seg: any) => String(unwrapV(seg?.s?.v ?? seg))).join('').trim()
+      return ''
+    }
+    return String(val).trim()
+  }
+  const normalizeDateInput = (raw: any): string | null => {
+    const s = toStr(raw)
+    if (!s) return null
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+    const dot = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/)
+    if (dot) return `${dot[3]}-${dot[2]}-${dot[1]}`
+    const d = new Date(s)
+    return Number.isFinite(d.getTime()) ? d.toISOString().split('T')[0] : null
+  }
+  const highlightRow = (aws: any, row: number) => {
+    try {
+      const range = aws.getRange(row, 0, 1, 28)
+      range.useThemeStyle('light-green')
+      const theme = range.getUsedThemeStyle()
+      setTimeout(() => { try { range.removeThemeStyle(theme) } catch {} }, 1000)
+    } catch {}
+  }
+  const letterToColumnIndex = (letter: string): number => letter.charCodeAt(0) - 'A'.charCodeAt(0)
+  const isCellLockedForManager = (
+    listName: string, row: number, col: number, store: ReturnType<typeof useSheetStore>
+  ) => {
+    if (row <= 0) return false
+    if (MANAGER_LOCKED_COLUMNS.has(col)) return true
+    if (col === 0) return false
+    const items = (store.records as any)?.[listName] as any[] | undefined
+    const rec = Array.isArray(items) ? items[row - 1] : undefined
+    if (!rec?.managerBlockListCell) return false
+    for (const rng of rec.managerBlockListCell) {
+      if (!rng?.length) continue
+      if (rng.length === 1 && typeof rng[0] === 'string') {
+        if (letterToColumnIndex(rng[0]) === col) return true
+      } else if (typeof rng[0] === 'string' && typeof rng[1] === 'string') {
+        const a = letterToColumnIndex(rng[0]), b = letterToColumnIndex(rng[1])
+        if (col >= a && col <= b) return true
+      }
+    }
+    return false
+  }
+  let cachedMe: any | undefined
+  const getMe = async () => (cachedMe ??= getUser())
+  const buildSR = (rowVals: any[], listName: string, id: number = 0) => {
+    const v = (i: number) => toStr(rowVals[i])
+    return {
+      additionalExpenses: v(24),
+      addressOfDelivery: v(5),
+      cargo: v(2),
+      client: v(7),
+      clientLead: v(22),
+      contractor: v(13),
+      contractorRate: v(16),
+      dateOfBill: v(11),
+      dateOfPaymentContractor: v(19),
+      dateOfPickup: v(0),
+      dateOfSubmission: v(4),
+      datePayment: v(12),
+      departmentHead: v(21),
+      driver: v(14),
+      formPayAs: v(8),
+      formPayHim: v(15),
+      id,
+      listName,
+      income: v(25),
+      incomeLearned: v(26),
+      manager: v(20),
+      numberOfBill: v(10),
+      numberOfBillAdd: v(18),
+      numberOfContainer: v(1),
+      ourFirm: v(6),
+      salesManager: v(23),
+      sumIssued: v(17),
+      summa: v(9),
+      taxes: '',
+      typeOfContainer: v(3),
     }
   }
-  if (perRow.size === 0) return
-
-  const listName = sheet.getName?.() || ''
-  const store = useSheetStore()
-
-  // mapper: достаём «старое» значение из store по колонке
-  const getOld = (rec: TransportAccounting, col0: number): any => {
-    switch (col0) {
-      case 0:  return rec.dateOfPickup
-      case 1:  return rec.numberOfContainer
-      case 2:  return rec.cargo
-      case 3:  return rec.typeOfContainer
-      case 4:  return rec.dateOfSubmission
-      case 5:  return rec.addressOfDelivery
-      case 6:  return rec.ourFirm
-      case 7:  return rec.client
-      case 8:  return rec.formPayAs
-      case 9:  return rec.summa
-      case 10: return rec.numberOfBill
-      case 11: return rec.dateOfBill
-      case 12: return rec.datePayment
-      case 13: return rec.contractor
-      case 14: return rec.driver
-      case 15: return rec.formPayHim
-      case 16: return rec.contractorRate
-      case 17: return rec.sumIssued
-      case 18: return rec.numberOfBillAdd
-      case 19: return rec.dateOfPaymentContractor
-      case 20: return rec.manager
-      case 21: return rec.departmentHead
-      case 22: return rec.clientLead
-      case 23: return rec.salesManager
-      case 24: return rec.additionalExpenses
-      case 25: return rec.income
-      case 26: return rec.incomeLearned
-      default: return ''
-    }
-  }
-
-  // помощник: есть ли данные в строке (кроме ID)
   const rowHasData = (rv: any[]): boolean => {
     for (let c = 0; c <= 26; c++) {
       const cell = rv?.[c]
-      const v = cell && typeof cell === 'object' && 'v' in cell ? cell.v : cell
-      if (String(v ?? '').trim() !== '') return true
+      const val = cell && typeof cell === 'object' && 'v' in cell ? cell.v : cell
+      if (String(val ?? '').trim() !== '') return true
     }
     return false
   }
 
-  // 1) решаем, какие строки менять:
-  //  - если prevRec есть → сравниваем payload vs store
-  //  - если prevRec нет → считаем «есть изменения», если в payload есть непустые значения
-  const rowsToProcess: number[] = []
-  for (const [row0, cols] of perRow) {
-    const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined
-    const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined
+  // ====== Единичный подтверждённый ввод ======
+  const handleRowChange = async (row: number, col: number) => {
+    const wb = univerAPI.getActiveWorkbook(); if (!wb) return
+    const aws = wb.getActiveSheet(); const s = aws?.getSheet(); if (!s || row === 0) return
+    const listName = s.getName(); const sheetStore = useSheetStore(); const toast = useToast()
 
-    if (!prevRec) {
-      // кандидат на create: есть ли среди payload-значений «не пустые»?
-      let hasNonEmpty = false
-      for (const col0 of cols) {
-        const v = cv[String(row0)]?.[String(col0)]?.v
-        if (String(v ?? '').trim() !== '') { hasNonEmpty = true; break }
+    if (dateCols.has(col)) {
+      const raw = s.getCell(row, col)
+      const n = normalizeDateInput(raw)
+      if (!n) {
+        await univerAPI.undo()
+        try { toast.add({ title: 'Неверный формат даты', color: 'error', duration: 2500 }) } catch {}
+        return
       }
-      if (hasNonEmpty) rowsToProcess.push(row0)
-      continue
+      const cur = toStr(raw); if (cur !== n) aws.getRange(row, col).setValue({ v: n })
     }
 
-    // кандидат на update: есть ли реальная разница
+    const rowVals = aws.getRange(row, 0, 1, 28).getValues()?.[0] ?? []
+    const idStr = toStr(rowVals[27]); const key = `${listName}#${row}`
+
+    let has = false; for (let c = 0; c <= 26; c++) if (toStr(rowVals[c])) { has = true; break }
+    if (!has && !idStr) return
+
+    if (!idStr) {
+      if (requestedRows.has(key)) return
+      requestedRows.add(key)
+      try { sheetStore.anchorCreateRow(listName, row); await sheetStore.addRecords([buildSR(rowVals, listName)]); highlightRow(aws, row) }
+      finally { requestedRows.delete(key) }
+      return
+    }
+
+    const idNum = Number(idStr); if (!Number.isFinite(idNum) || idNum <= 0) return
+    await sheetStore.updateRecords([{ ...buildSR(rowVals, listName, idNum), id: idNum }]); highlightRow(aws, row)
+  }
+
+  const offEditEnded = univerAPI.addEvent(univerAPI.Event.SheetEditEnded, async (params: any) => {
+    if (batchPasteInProgress) return
+    const { row, column: col, isConfirm } = params; if (!isConfirm) return
+    const wb = univerAPI.getActiveWorkbook(); const aws = wb?.getActiveSheet(); const s = aws?.getSheet()
+    if (!s || row === 0) return
+    const me = await getMe(); const sheetStore = useSheetStore(); const listName = s.getName()
+    if (me?.roleCode === 'ROLE_MANAGER' && isCellLockedForManager(listName, row, col, sheetStore)) {
+      await univerAPI.undo(); try { useToast().add({ title: 'Ячейка заблокирована', color: 'warning', duration: 2500 }) } catch {}; return
+    }
+    await handleRowChange(row, col)
+  })
+
+  // ====== Вставка: до / после ======
+  const normalizeNumberStr = (raw: any): string => (raw ?? '').toString().replace(/\s+/g, '').replace(',', '.')
+  const offBeforePaste = univerAPI.addEvent(univerAPI.Event.BeforeClipboardPaste, async (params: any) => {
+    batchPasteInProgress = true
+    const wb = univerAPI.getActiveWorkbook(); const aws = wb?.getActiveSheet()
+    const startCol = aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0
+    const numericCols = new Set([9, 16, 17, 24, 25, 26])
     let changed = false
-    for (const col0 of cols) {
-      const newVal = cv[String(row0)]?.[String(col0)]?.v
-      const newStr = String(newVal ?? '').trim()
-      const oldStr = String(getOld(prevRec, col0) ?? '').trim()
-      if (newStr !== oldStr) { changed = true; break }
+    const norm = (v: any, c: number) => dateCols.has(c) ? (normalizeDateInput(v) ?? v) : (numericCols.has(c) ? normalizeNumberStr(v) : v)
+
+    if (typeof (params as any)?.text === 'string') {
+      const rows = ((params as any).text as string).split(/\r?\n/)
+      const next = rows.map(line => !line ? line : line.split('\t').map((cell, i) => {
+        const nv = norm(cell, startCol + i); if (nv !== cell) changed = true; return nv
+      }).join('\t')).join('\n')
+      if (next !== (params as any).text) { (params as any).text = next; changed = true }
     }
-    if (changed) rowsToProcess.push(row0)
-  }
-  if (!rowsToProcess.length) return
+    if (typeof (params as any)?.html === 'string') {
+      const prev = (params as any).html as string
+      const next = prev.replace(/\b(\d{2})\.(\d{2})\.(\d{4})\b/g, (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`)
+      if (next !== prev) { (params as any).html = next; changed = true }
+    }
+    const data = (params as any)?.data ?? (params as any)?.clipboardData
+    if (data) {
+      if (typeof data.html === 'string') {
+        const prev = data.html as string
+        const next = prev.replace(/\b(\d{2})\.(\d{2})\.(\d{4})\b/g, (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`)
+        if (next !== prev) { data.html = next; changed = true }
+      }
+      if (Array.isArray(data.cells)) {
+        data.cells = data.cells.map((row: any[]) => Array.isArray(row)
+          ? row.map((cell: any, i: number) => { const nv = norm(cell, startCol + i); if (nv !== cell) changed = true; return nv })
+          : row)
+      }
+    }
+    if (Array.isArray((params as any)?.cells)) {
+      (params as any).cells = (params as any).cells.map((row: any[]) => Array.isArray(row)
+        ? row.map((cell: any, i: number) => { const nv = norm(cell, startCol + i); if (nv !== cell) changed = true; return nv })
+        : row)
+    }
+    if (changed) console.log('[univer-events] BeforeClipboardPaste: normalized')
+  })
 
-  // 2) собираем DTO: читаем строку из листа и патчим payload-значениями
-  const createDtos: any[] = []
-  const updateDtos: any[] = []
+  const offPasted = univerAPI.addEvent(univerAPI.Event.ClipboardPasted, async () => {
+    const wb = univerAPI.getActiveWorkbook(); const aws = wb?.getActiveSheet(); const s = aws?.getSheet()
+    if (!wb || !aws || !s) { batchPasteInProgress = false; return }
+    try {
+      const active = aws.getSelection()?.getActiveRange?.()?.getRange(); if (!active) return
+      const startRow = Math.max(1, active.startRow), endRow = active.endRow, startCol = active.startColumn, endCol = active.endColumn
+      const listName = s.getName(); const sheetStore = useSheetStore(); const toast = useToast()
+      const me = await getMe()
+      if (me?.roleCode === 'ROLE_MANAGER') {
+        for (let r = startRow; r <= endRow; r++) {
+          let locked = false
+          for (let c = startCol; c <= endCol; c++) if (isCellLockedForManager(listName, r, c, sheetStore)) { locked = true; break }
+          if (locked) { await univerAPI.undo(); try { toast.add({ title: 'Строка/ячейка заблокирована', color: 'warning' }) } catch {}; return }
+        }
+      }
+      const numericCols = new Set([9, 16, 17, 24, 25, 26])
+      const rows = endRow - startRow + 1, cols = endCol - startCol + 1
+      if (rows > 0 && cols > 0) {
+        const block = aws.getRange(startRow, startCol, rows, cols)
+        const values = block.getValues()
+        for (let r = 0; r < rows; r++) {
+          const rowValues = values[r]; if (!rowValues) continue
+          for (let c = 0; c < cols; c++) {
+            const absCol = startCol + c; const orig = toStr(rowValues[c])
+            if (dateCols.has(absCol)) {
+              const nd = normalizeDateInput(orig); if (nd && orig !== nd) values[r][c] = { v: nd }
+            } else if (numericCols.has(absCol)) {
+              const nn = orig.replace(/\s+/g, '').replace(',', '.'); if (orig !== nn) values[r][c] = { v: nn }
+            }
+          }
+        }
+        block.setValues(values)
+      }
+      const createDtos: any[] = [], updateDtos: any[] = []
+      for (let r = startRow; r <= endRow; r++) {
+        const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
+        const idStr = toStr(rowVals[27])
+        let has = false; for (let c = 0; c <= 26; c++) if (toStr(rowVals[c])) { has = true; break }
+        if (!has && !idStr) continue
+        if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
+          updateDtos.push(buildSR(rowVals, listName, Number(idStr)))
+        } else if (has) {
+          createDtos.push(buildSR(rowVals, listName))
+        }
+      }
+      if (createDtos.length) await sheetStore.addRecords(createDtos)
+      if (updateDtos.length) await sheetStore.updateRecords(updateDtos)
+      if (createDtos.length || updateDtos.length) for (let r = startRow; r <= endRow; r++) {
+        const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
+        let has = false; for (let c = 0; c <= 26; c++) if (toStr(rowVals[c])) { has = true; break }
+        if (has || toStr(rowVals[27])) highlightRow(aws, r)
+      }
+    } catch (e) {
+      console.error('[univer-events] paste handler failed:', e)
+    } finally {
+      batchPasteInProgress = false
+    }
+  })
 
-  for (const row0 of rowsToProcess) {
-    const rowVals = ws.getRange(row0, 0, 1, 28).getValues()?.[0] ?? []
+  // ====== SheetValueChanged: auto-fill / refill / set-range-values (без конфликтов с вставкой) ======
+  const PASTE_TRIGGERS = new Set([
+    'sheet.command.clipboard-paste',
+    'sheet.command.paste', 'sheet.command.paste-values',
+    'sheet.command.paste-formula', 'sheet.command.paste-all',
+  ])
 
-    const cols = perRow.get(row0)!
-    for (const col0 of cols) {
-      const vFromPayload = cv[String(row0)]?.[String(col0)]?.v
-      if (rowVals[col0] && typeof rowVals[col0] === 'object' && 'v' in rowVals[col0]) {
-        rowVals[col0].v = vFromPayload
-      } else {
-        rowVals[col0] = { v: vFromPayload }
+  const offValueChanged = univerAPI.addEvent(univerAPI.Event.SheetValueChanged, async (params: any) => {
+    // гейты: инициализация/тихий режим + период вставки + явные триггеры вставки
+    if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return
+    if (batchPasteInProgress) return
+    const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? ''
+    if (PASTE_TRIGGERS.has(trigger)) return
+
+    const wb = univerAPI.getActiveWorkbook(); const ws = wb?.getActiveSheet(); const sheet = ws?.getSheet()
+    if (!wb || !ws || !sheet) return
+    const activeSheetId = sheet.getSheetId?.(); const subUnitId = params?.subUnitId ?? params?.payload?.params?.subUnitId
+    if (activeSheetId && subUnitId && subUnitId !== activeSheetId) return
+
+    // только изменения со значением (v)
+    const cv: Record<string, Record<string, any>> | undefined =
+      params?.cellValue ?? params?.payload?.params?.cellValue
+    if (!cv || typeof cv !== 'object') return
+
+    const perRow = new Map<number, Set<number>>() // row0 -> Set<col0>
+    for (const rk of Object.keys(cv)) {
+      const rowObj = cv[rk]; if (!rowObj) continue
+      for (const ck of Object.keys(rowObj)) {
+        const cell = rowObj[ck]; if (!cell || !Object.prototype.hasOwnProperty.call(cell, 'v')) continue
+        const row0 = Number(rk), col0 = Number(ck)
+        if (!Number.isFinite(row0) || !Number.isFinite(col0)) continue
+        if (row0 <= 0 || col0 === 27) continue
+        ;(perRow.get(row0) ?? perRow.set(row0, new Set()).get(row0)!).add(col0)
+      }
+    }
+    if (perRow.size === 0) return
+
+    const listName = sheet.getName?.() || ''
+    const store = useSheetStore()
+    const getOld = (rec: TransportAccounting, col0: number): any => {
+      switch (col0) {
+        case 0:  return rec.dateOfPickup
+        case 1:  return rec.numberOfContainer
+        case 2:  return rec.cargo
+        case 3:  return rec.typeOfContainer
+        case 4:  return rec.dateOfSubmission
+        case 5:  return rec.addressOfDelivery
+        case 6:  return rec.ourFirm
+        case 7:  return rec.client
+        case 8:  return rec.formPayAs
+        case 9:  return rec.summa
+        case 10: return rec.numberOfBill
+        case 11: return rec.dateOfBill
+        case 12: return rec.datePayment
+        case 13: return rec.contractor
+        case 14: return rec.driver
+        case 15: return rec.formPayHim
+        case 16: return rec.contractorRate
+        case 17: return rec.sumIssued
+        case 18: return rec.numberOfBillAdd
+        case 19: return rec.dateOfPaymentContractor
+        case 20: return rec.manager
+        case 21: return rec.departmentHead
+        case 22: return rec.clientLead
+        case 23: return rec.salesManager
+        case 24: return rec.additionalExpenses
+        case 25: return rec.income
+        case 26: return rec.incomeLearned
+        default: return ''
       }
     }
 
-    const idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim()
-    const idNum = Number(idStr)
+    // решаем, какие строки обрабатывать (create-кандидаты без prevRec и непустым payload, либо diff vs store)
+    const rowsToProcess: number[] = []
+    for (const [row0, cols] of perRow) {
+      const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined
+      const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined
 
-    if (Number.isFinite(idNum) && idNum > 0) {
-      updateDtos.push({ ...buildSR(rowVals, listName, idNum), id: idNum })
-    } else {
-      if (rowHasData(rowVals)) {
-        try { store.anchorCreateRow?.(listName, row0) } catch {}
-        createDtos.push(buildSR(rowVals, listName))
+      if (!prevRec) {
+        let nonEmpty = false
+        for (const c of cols) { const v = cv[String(row0)]?.[String(c)]?.v; if (String(v ?? '').trim() !== '') { nonEmpty = true; break } }
+        if (nonEmpty) rowsToProcess.push(row0)
+        continue
       }
+      let changed = false
+      for (const c of cols) {
+        const nv = cv[String(row0)]?.[String(c)]?.v
+        if (String(nv ?? '').trim() !== String(getOld(prevRec, c) ?? '').trim()) { changed = true; break }
+      }
+      if (changed) rowsToProcess.push(row0)
     }
-  }
-  if (!createDtos.length && !updateDtos.length) return
+    if (!rowsToProcess.length) return
 
-  // 3) применяем
-  try {
-    if (createDtos.length) await store.addRecords(createDtos)
-    if (updateDtos.length) await store.updateRecords(updateDtos)
+    const key = (r: number) => `${listName}#${r}`
+    for (const r of rowsToProcess) { if (processingRows.has(key(r))) return; processingRows.add(key(r)) }
 
-    const aws = wb.getActiveSheet()
-    for (const r of rowsToProcess) highlightRow(aws, r)
-  } catch (e) {
-    console.error('[SheetValueChanged] create/update failed:', e)
-  }
-})
+    const createDtos: any[] = [], updateDtos: any[] = []
+    try {
+      for (const row0 of rowsToProcess) {
+        const rowVals = ws.getRange(row0, 0, 1, 28).getValues()?.[0] ?? []
+        const cols = perRow.get(row0)! // подпишем свежие значения из payload
+        for (const c of cols) {
+          const vFromPayload = cv[String(row0)]?.[String(c)]?.v
+          if (rowVals[c] && typeof rowVals[c] === 'object' && 'v' in rowVals[c]) rowVals[c].v = vFromPayload
+          else rowVals[c] = { v: vFromPayload }
+        }
+        const idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim()
+        const idNum = Number(idStr)
+        if (Number.isFinite(idNum) && idNum > 0) {
+          updateDtos.push({ ...buildSR(rowVals, listName, idNum), id: idNum })
+        } else {
+          if (rowHasData(rowVals)) {
+            try { store.anchorCreateRow?.(listName, row0) } catch {}
+            createDtos.push(buildSR(rowVals, listName))
+          }
+        }
+      }
+      if (!createDtos.length && !updateDtos.length) return
+      if (createDtos.length) await store.addRecords(createDtos)
+      if (updateDtos.length) await store.updateRecords(updateDtos)
+      const aws = wb.getActiveSheet(); for (const r of rowsToProcess) highlightRow(aws, r)
+    } catch (e) {
+      console.error('[SheetValueChanged] create/update failed:', e)
+    } finally {
+      for (const r of rowsToProcess) processingRows.delete(key(r))
+    }
+  })
 
-
-
-
-  // Return disposer to allow cleanup by caller if needed
+  // ====== Disposer ======
   return () => {
-    try { (offEditEnded as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offEditEnded', e); }
-    try { (offBeforePaste as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offBeforePaste', e); }
-    try { (offPasted as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offPasted', e); }
-    try { (offValueChanged as any)?.dispose?.(); } catch (e) { console.error('Failed to dispose offValueChanged', e); }
-  };
+    try { (offEditEnded as any)?.dispose?.() } catch {}
+    try { (offBeforePaste as any)?.dispose?.() } catch {}
+    try { (offPasted as any)?.dispose?.() } catch {}
+    try { (offValueChanged as any)?.dispose?.() } catch {}
+  }
 }

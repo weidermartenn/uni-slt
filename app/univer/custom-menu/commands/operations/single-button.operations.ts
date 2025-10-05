@@ -33,32 +33,37 @@ export const UpdateHistoryButtonOperation: ICommand = {
     id: 'custom-menu.operation.update-history-button',
     type: CommandType.OPERATION,
     handler: async (accessor: IAccessor) => {
-        const uniStore = useUniverStore()
-        const api = uniStore.getUniver()
+        try {
+            const uniStore = useUniverStore()
+            const api = uniStore.getUniver()
 
-        const selection = api?.getActiveWorkbook()?.getActiveSheet().getSelection()?.getActiveRange()
-        const a1 = selection?.getA1Notation()
-        const range = selection?.getRange()
-        const startRow = range ? range.startRow : 1
-        const startColumn = range ? range.startColumn : 1
-        const fullRange = api?.getActiveWorkbook()?.getActiveSheet().getRange(startRow, 27)
+            const selection = api?.getActiveWorkbook()?.getActiveSheet().getSelection()?.getActiveRange()
+            const a1 = selection?.getA1Notation()
+            const range = selection?.getRange()
+            const startRow = range ? range.startRow : 1
+            const startColumn = range ? range.startColumn : 1
+            const fullRange = api?.getActiveWorkbook()?.getActiveSheet().getRange(startRow, 27)
 
-        const response = await $fetch(`${kingsApiBase}/workTable/transportAccounting/${fullRange?.getValue()}/${columnNames[startColumn]}`, { headers: authHeaders() })
-        console.log(response)
-        const items = (response as any)?.object ?? []
-        uniStore.setCellHistory(items, {
-            a1: a1 ?? ''
-        })
+            
+            const response = await $fetch(`${kingsApiBase}/workTable/transportAccounting/${fullRange?.getValue()}/${columnNames[startColumn]}`, { headers: authHeaders() })
+            console.log(response)
+            const items = (response as any)?.object ?? []
+            uniStore.setCellHistory(items, {
+                a1: a1 ?? ''
+            })
 
-        api?.openSidebar({
-            header: { title: 'История изменений'},
-            children: { label: 'CellHistorySidebar' },
-            width: 450,
-            onClose: () => { 
-                
-            }
-        })
-        return true
+            api?.openSidebar({
+                header: { title: 'История изменений'},
+                children: { label: 'CellHistorySidebar' },
+                width: 450,
+                onClose: () => { 
+                    
+                }
+            })
+            return true
+        } catch (e) {
+            return false
+        }
     }
 }
 
