@@ -113,6 +113,19 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return false
   }
 
+  // числовые колонки (0-based): J, Q, R, Y, а также 25, 26
+  const NUMERIC_COLS = new Set([9, 16, 17, 24, 25, 26])
+
+  // простая проверка: число или пусто; текст ошибок типа "#..." — не допускаем
+  const isNumericOrEmpty = (v: any): boolean => {
+    if (v == null) return true
+    const s = String(v).trim()
+    if (!s) return true
+    if (s.startsWith('#')) return false
+    if (typeof v === 'number') return Number.isFinite(v)
+    return /^[-+]?\d+(?:\.\d+)?$/.test(s) && Number.isFinite(Number(s))
+  }
+
   // ====== Единичный подтверждённый ввод ======
   const handleRowChange = async (row: number, col: number) => {
     const wb = univerAPI.getActiveWorkbook(); if (!wb) return
@@ -128,6 +141,24 @@ export function registerUniverEvents(univerAPI: FUniver) {
         return
       }
       const cur = toStr(raw); if (cur !== n) aws.getRange(row, col).setValue({ v: n })
+    }
+
+    if (NUMERIC_COLS.has(col)) {
+      const raw = s.getCell(row, col)           // универсально возвращает текущее UI-значение
+      const val = toStr(raw)                    // строчное представление
+      if (!isNumericOrEmpty(val)) {
+        await univerAPI.undo()
+        try {
+          useToast().add({
+            title: 'Только числа',
+            description: 'В этой колонке допускаются только числовые значения',
+            color: 'warning',
+            duration: 3000,
+            icon: 'i-lucide-alert-triangle'
+          })
+        } catch {}
+        return
+      }
     }
 
     const rowVals = aws.getRange(row, 0, 1, 28).getValues()?.[0] ?? []
@@ -262,12 +293,11 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
   })
 
-  // ====== SheetValueChanged: auto-fill / refill / set-range-values (без конфликтов с вставкой) ======
   const PASTE_TRIGGERS = new Set([
-    'sheet.command.clipboard-paste',
-    'sheet.command.paste', 'sheet.command.paste-values',
-    'sheet.command.paste-formula', 'sheet.command.paste-all',
-  ])
+  'sheet.command.clipboard-paste',
+  'sheet.command.paste', 'sheet.command.paste-values',
+  'sheet.command.paste-formula', 'sheet.command.paste-all',
+])
 
   const offValueChanged = univerAPI.addEvent(univerAPI.Event.SheetValueChanged, async (params: any) => {
     // гейты: инициализация/тихий режим + период вставки + явные триггеры вставки
@@ -276,21 +306,28 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? ''
     if (PASTE_TRIGGERS.has(trigger)) return
 
-    const wb = univerAPI.getActiveWorkbook(); const ws = wb?.getActiveSheet(); const sheet = ws?.getSheet()
+    const wb = univerAPI.getActiveWorkbook()
+    const ws = wb?.getActiveSheet()
+    const sheet = ws?.getSheet()
     if (!wb || !ws || !sheet) return
-    const activeSheetId = sheet.getSheetId?.(); const subUnitId = params?.subUnitId ?? params?.payload?.params?.subUnitId
+
+    // только активный лист
+    const activeSheetId = sheet.getSheetId?.()
+    const subUnitId = params?.subUnitId ?? params?.payload?.params?.subUnitId
     if (activeSheetId && subUnitId && subUnitId !== activeSheetId) return
 
-    // только изменения со значением (v)
+    // payload.cellValue со значениями (v), игнорируем чисто стили (s)
     const cv: Record<string, Record<string, any>> | undefined =
       params?.cellValue ?? params?.payload?.params?.cellValue
     if (!cv || typeof cv !== 'object') return
 
-    const perRow = new Map<number, Set<number>>() // row0 -> Set<col0>
+    // row0 -> Set<col0>, исключаем заголовок и ID колонку
+    const perRow = new Map<number, Set<number>>()
     for (const rk of Object.keys(cv)) {
       const rowObj = cv[rk]; if (!rowObj) continue
       for (const ck of Object.keys(rowObj)) {
-        const cell = rowObj[ck]; if (!cell || !Object.prototype.hasOwnProperty.call(cell, 'v')) continue
+        const cell = rowObj[ck]
+        if (!cell || !Object.prototype.hasOwnProperty.call(cell, 'v')) continue
         const row0 = Number(rk), col0 = Number(ck)
         if (!Number.isFinite(row0) || !Number.isFinite(col0)) continue
         if (row0 <= 0 || col0 === 27) continue
@@ -301,6 +338,34 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
     const listName = sheet.getName?.() || ''
     const store = useSheetStore()
+
+    // 1) Валидация: в числовые колонки не допускаем текст/ошибки (#ССЫЛКА, #ДЕЛ/0! и т.п.)
+    {
+      let invalid = false
+      for (const [row0, cols] of perRow) {
+        for (const col0 of cols) {
+          if (!NUMERIC_COLS.has(col0)) continue
+          const vFromPayload = cv[String(row0)]?.[String(col0)]?.v
+          if (!isNumericOrEmpty(vFromPayload)) { invalid = true; break }
+        }
+        if (invalid) break
+      }
+      if (invalid) {
+        await univerAPI.undo()
+        try {
+          useToast().add({
+            title: 'Только числа',
+            description: 'В числовую колонку внесено текстовое значение или ошибка.',
+            color: 'warning',
+            duration: 3000,
+            icon: 'i-lucide-alert-triangle'
+          })
+        } catch {}
+        return
+      }
+    }
+
+    // 2) Определяем строки к обработке (create-кандидаты без prevRec и непустым payload, либо diff vs store)
     const getOld = (rec: TransportAccounting, col0: number): any => {
       switch (col0) {
         case 0:  return rec.dateOfPickup
@@ -334,7 +399,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
       }
     }
 
-    // решаем, какие строки обрабатывать (create-кандидаты без prevRec и непустым payload, либо diff vs store)
     const rowsToProcess: number[] = []
     for (const [row0, cols] of perRow) {
       const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined
@@ -342,10 +406,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       if (!prevRec) {
         let nonEmpty = false
-        for (const c of cols) { const v = cv[String(row0)]?.[String(c)]?.v; if (String(v ?? '').trim() !== '') { nonEmpty = true; break } }
+        for (const c of cols) {
+          const v = cv[String(row0)]?.[String(c)]?.v
+          if (String(v ?? '').trim() !== '') { nonEmpty = true; break }
+        }
         if (nonEmpty) rowsToProcess.push(row0)
         continue
       }
+
       let changed = false
       for (const c of cols) {
         const nv = cv[String(row0)]?.[String(c)]?.v
@@ -355,21 +423,30 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
     if (!rowsToProcess.length) return
 
+    // 3) Антидубль на случай каскадов
     const key = (r: number) => `${listName}#${r}`
-    for (const r of rowsToProcess) { if (processingRows.has(key(r))) return; processingRows.add(key(r)) }
+    for (const r of rowsToProcess) {
+      if (processingRows.has(key(r))) return
+      processingRows.add(key(r))
+    }
 
-    const createDtos: any[] = [], updateDtos: any[] = []
+    // 4) Патчим строку значениями из payload и делим на create/update
+    const createDtos: any[] = []
+    const updateDtos: any[] = []
+
     try {
       for (const row0 of rowsToProcess) {
         const rowVals = ws.getRange(row0, 0, 1, 28).getValues()?.[0] ?? []
-        const cols = perRow.get(row0)! // подпишем свежие значения из payload
+        const cols = perRow.get(row0)!
         for (const c of cols) {
           const vFromPayload = cv[String(row0)]?.[String(c)]?.v
           if (rowVals[c] && typeof rowVals[c] === 'object' && 'v' in rowVals[c]) rowVals[c].v = vFromPayload
           else rowVals[c] = { v: vFromPayload }
         }
+
         const idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim()
         const idNum = Number(idStr)
+
         if (Number.isFinite(idNum) && idNum > 0) {
           updateDtos.push({ ...buildSR(rowVals, listName, idNum), id: idNum })
         } else {
@@ -379,16 +456,21 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
         }
       }
+
       if (!createDtos.length && !updateDtos.length) return
+
       if (createDtos.length) await store.addRecords(createDtos)
       if (updateDtos.length) await store.updateRecords(updateDtos)
-      const aws = wb.getActiveSheet(); for (const r of rowsToProcess) highlightRow(aws, r)
+
+      const aws = wb.getActiveSheet()
+      for (const r of rowsToProcess) highlightRow(aws, r)
     } catch (e) {
       console.error('[SheetValueChanged] create/update failed:', e)
     } finally {
       for (const r of rowsToProcess) processingRows.delete(key(r))
     }
   })
+
 
   // ====== Disposer ======
   return () => {
