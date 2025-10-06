@@ -9,14 +9,20 @@ import type { TransportAccounting } from '~/entities/TransportAccountingDto/type
 export function registerUniverEvents(univerAPI: FUniver) {
   // ====== Константы/флаги ======
   const dateCols = new Set([0, 4, 11, 12, 19]) // A,E,L,M,T (0-based)
+  // ВСЕГДА заблокированные для менеджера: E,K,L,M,R,T,Z,AA,AB
   const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27])
+
   const requestedRows = new Set<string>()        // защита от двойного create
   let batchPasteInProgress = false               // флаг периода вставки
   const processingRows = new Set<string>()       // антидубль для SVC каскадов
   const univerStore = useUniverStore()
 
+  // числовые колонки (0-based): J, Q, R, Y, а также 25, 26
+  const NUMERIC_COLS = new Set([9, 16, 17, 24, 25, 26])
+
   // ====== Helpers ======
   const unwrapV = (x: any): any => (x && typeof x === 'object' && 'v' in x ? unwrapV(x.v) : x)
+
   const toStr = (raw: any): string => {
     const val = unwrapV(raw)
     if (val == null) return ''
@@ -28,16 +34,61 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
     return String(val).trim()
   }
+
+  // === Поддержка Excel-сериалов и эпохи при нормализации дат ===
+  const excelSerialToISO = (n: number): string => {
+    // База Excel = 1899-12-30, работаем в UTC, чтобы избежать сдвигов TZ
+    const baseMs = Date.UTC(1899, 11, 30)
+    const ms = Math.round(n * 86400000) // поддержка дробной части суток
+    const d = new Date(baseMs + ms)
+    const yyyy = d.getUTCFullYear()
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+    const dd = String(d.getUTCDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
+
+  const tsToISO = (ms: number): string => {
+    const d = new Date(ms)
+    const yyyy = d.getUTCFullYear()
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+    const dd = String(d.getUTCDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
+
   const normalizeDateInput = (raw: any): string | null => {
-    const s = toStr(raw)
+    const v = unwrapV(raw)
+    if (v == null || v === '') return null
+
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      // Excel-сериал (>= 1970-01-01 → 25569)
+      if (v >= 25569) return excelSerialToISO(v)
+      // Эпоха (мс/сек)
+      if (v > 1e12) return tsToISO(v)                 // миллисекунды
+      if (v > 1e10 && v < 1e12) return tsToISO(v * 1000) // секунды
+    }
+
+    const s = toStr(v)
     if (!s) return null
+
+    // Чистое число строкой — вероятный Excel-сериал
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const n = Number(s)
+      if (Number.isFinite(n) && n >= 25569) return excelSerialToISO(n)
+    }
+
     const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
     if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+
     const dot = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/)
     if (dot) return `${dot[3]}-${dot[2]}-${dot[1]}`
+
+    const slash = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+    if (slash) return `${slash[3]}-${slash[2]}-${slash[1]}`
+
     const d = new Date(s)
-    return Number.isFinite(d.getTime()) ? d.toISOString().split('T')[0] : null
+    return Number.isFinite(d.getTime()) ? tsToISO(d.getTime()) : null
   }
+
   const highlightRow = (aws: any, row: number) => {
     try {
       const range = aws.getRange(row, 0, 1, 28)
@@ -46,12 +97,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
       setTimeout(() => { try { range.removeThemeStyle(theme) } catch {} }, 1000)
     } catch {}
   }
+
   const letterToColumnIndex = (letter: string): number => letter.charCodeAt(0) - 'A'.charCodeAt(0)
+
   const isCellLockedForManager = (
     listName: string, row: number, col: number, store: ReturnType<typeof useSheetStore>
   ) => {
     if (row <= 0) return false
-    if (MANAGER_LOCKED_COLUMNS.has(col)) return true
+    if (MANAGER_LOCKED_COLUMNS.has(col)) return true // ВСЕГДА заблокировано для менеджера
     if (col === 0) return false
     const items = (store.records as any)?.[listName] as any[] | undefined
     const rec = Array.isArray(items) ? items[row - 1] : undefined
@@ -67,10 +120,48 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
     return false
   }
+
   let cachedMe: any | undefined
   const getMe = async () => (cachedMe ??= getUser())
+
+  // --- соответствие индекс->ключ DTO (0..27)
+  const COL_TO_KEY = [
+    'dateOfPickup',        // 0  A
+    'numberOfContainer',   // 1  B
+    'cargo',               // 2  C
+    'typeOfContainer',     // 3  D
+    'dateOfSubmission',    // 4  E
+    'addressOfDelivery',   // 5  F
+    'ourFirm',             // 6  G
+    'client',              // 7  H
+    'formPayAs',           // 8  I
+    'summa',               // 9  J
+    'numberOfBill',        // 10 K
+    'dateOfBill',          // 11 L
+    'datePayment',         // 12 M
+    'contractor',          // 13 N
+    'driver',              // 14 O
+    'formPayHim',          // 15 P
+    'contractorRate',      // 16 Q
+    'sumIssued',           // 17 R
+    'numberOfBillAdd',     // 18 S
+    'dateOfPaymentContractor', // 19 T
+    'manager',             // 20 U
+    'departmentHead',      // 21 V
+    'clientLead',          // 22 W
+    'salesManager',        // 23 X
+    'additionalExpenses',  // 24 Y
+    'income',              // 25 Z
+    'incomeLearned',       // 26 AA
+    'id'                   // 27 AB
+  ] as const
+
+  // buildSR: нормализуем даты для всех колонок из dateCols → всегда ISO
   const buildSR = (rowVals: any[], listName: string, id: number = 0) => {
-    const v = (i: number) => toStr(rowVals[i])
+    const v = (i: number) => dateCols.has(i)
+      ? (normalizeDateInput(rowVals[i]) ?? '')
+      : toStr(rowVals[i])
+
     return {
       additionalExpenses: v(24),
       addressOfDelivery: v(5),
@@ -104,6 +195,26 @@ export function registerUniverEvents(univerAPI: FUniver) {
       typeOfContainer: v(3),
     }
   }
+
+  // Маска для менеджера: заблокированные колонки оставляем как в prevRec
+  const maskDtoForManager = (
+    dto: any,
+    listName: string,
+    row0: number,
+    store: ReturnType<typeof useSheetStore>,
+    prevRec?: TransportAccounting
+  ) => {
+    if (!prevRec) return dto
+    for (let col = 0; col <= 26; col++) { // 27=id — не трогаем
+      if (isCellLockedForManager(listName, row0, col, store)) {
+        const key = COL_TO_KEY[col]
+        // @ts-expect-error — доступ по ключу
+        dto[key] = (prevRec as any)?.[key] ?? ''
+      }
+    }
+    return dto
+  }
+
   const rowHasData = (rv: any[]): boolean => {
     for (let c = 0; c <= 26; c++) {
       const cell = rv?.[c]
@@ -112,9 +223,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
     return false
   }
-
-  // числовые колонки (0-based): J, Q, R, Y, а также 25, 26
-  const NUMERIC_COLS = new Set([9, 16, 17, 24, 25, 26])
 
   // простая проверка: число или пусто; текст ошибок типа "#..." — не допускаем
   const isNumericOrEmpty = (v: any): boolean => {
@@ -126,6 +234,47 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return /^[-+]?\d+(?:\.\d+)?$/.test(s) && Number.isFinite(Number(s))
   }
 
+  // ====== Откат заблокированных ячеек (надёжнее, чем undo в SVC) ======
+  const getPrevValueForCell = (
+    listName: string,
+    row0: number,
+    col0: number,
+    store: ReturnType<typeof useSheetStore>
+  ): string => {
+    const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined
+    const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined
+    if (!prevRec) return ''
+    const key = COL_TO_KEY[col0] as keyof TransportAccounting
+    const raw = (prevRec as any)?.[key]
+    return dateCols.has(col0) ? (normalizeDateInput(raw) ?? '') : String(raw ?? '')
+  }
+
+  const revertLockedCells = (
+    ws: any,
+    listName: string,
+    lockedCells: Array<{ row0: number, col0: number }>,
+    store: ReturnType<typeof useSheetStore>
+  ) => {
+    if (!lockedCells.length) return
+    try { univerStore.beginQuiet?.() } catch {}
+    try {
+      for (const { row0, col0 } of lockedCells) {
+        const prev = getPrevValueForCell(listName, row0, col0, store)
+        ws.getRange(row0, col0).setValue({ v: prev })
+      }
+    } finally {
+      try { univerStore.endQuiet?.() } catch {}
+    }
+  }
+
+  const revertSingleLockedCell = (
+    ws: any,
+    listName: string,
+    row0: number,
+    col0: number,
+    store: ReturnType<typeof useSheetStore>
+  ) => revertLockedCells(ws, listName, [{ row0, col0 }], store)
+
   // ====== Единичный подтверждённый ввод ======
   const handleRowChange = async (row: number, col: number) => {
     const wb = univerAPI.getActiveWorkbook(); if (!wb) return
@@ -136,7 +285,11 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const raw = s.getCell(row, col)
       const n = normalizeDateInput(raw)
       if (!n) {
-        await univerAPI.undo()
+        // при ручном вводе неверного формата просто откатываем
+        try { univerStore.beginQuiet?.() } catch {}
+        try {
+          aws.getRange(row, col).setValue({ v: '' })
+        } finally { try { univerStore.endQuiet?.() } catch {} }
         try { toast.add({ title: 'Неверный формат даты', color: 'error', duration: 2500 }) } catch {}
         return
       }
@@ -147,7 +300,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const raw = s.getCell(row, col)           // универсально возвращает текущее UI-значение
       const val = toStr(raw)                    // строчное представление
       if (!isNumericOrEmpty(val)) {
-        await univerAPI.undo()
+        try { univerStore.beginQuiet?.() } catch {}
+        try { aws.getRange(row, col).setValue({ v: '' }) } finally { try { univerStore.endQuiet?.() } catch {} }
         try {
           useToast().add({
             title: 'Только числа',
@@ -176,7 +330,19 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
 
     const idNum = Number(idStr); if (!Number.isFinite(idNum) || idNum <= 0) return
-    await sheetStore.updateRecords([{ ...buildSR(rowVals, listName, idNum), id: idNum }]); highlightRow(aws, row)
+
+    // Менеджер: перед апдейтом маскируем заблокированные поля
+    const me = await getMe()
+    const arr = (sheetStore.records as any)?.[listName] as TransportAccounting[] | undefined
+    const prevRec = Array.isArray(arr) ? arr[row - 1] : undefined
+
+    let dto = { ...buildSR(rowVals, listName, idNum), id: idNum }
+    if (me?.roleCode === 'ROLE_MANAGER') {
+      dto = maskDtoForManager(dto, listName, row, sheetStore, prevRec)
+    }
+
+    await sheetStore.updateRecords([dto]); 
+    highlightRow(aws, row)
   }
 
   const offEditEnded = univerAPI.addEvent(univerAPI.Event.SheetEditEnded, async (params: any) => {
@@ -186,7 +352,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (!s || row === 0) return
     const me = await getMe(); const sheetStore = useSheetStore(); const listName = s.getName()
     if (me?.roleCode === 'ROLE_MANAGER' && isCellLockedForManager(listName, row, col, sheetStore)) {
-      await univerAPI.undo(); try { useToast().add({ title: 'Ячейка заблокирована', color: 'warning', duration: 2500 }) } catch {}; return
+      // Надёжно откатываем вручную вместо undo
+      revertSingleLockedCell(aws, listName, row, col, sheetStore)
+      try { useToast().add({ title: 'Ячейка заблокирована', color: 'warning', duration: 2500 }) } catch {}
+      return
     }
     await handleRowChange(row, col)
   })
@@ -197,9 +366,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
     batchPasteInProgress = true
     const wb = univerAPI.getActiveWorkbook(); const aws = wb?.getActiveSheet()
     const startCol = aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0
-    const numericCols = new Set([9, 16, 17, 24, 25, 26])
     let changed = false
-    const norm = (v: any, c: number) => dateCols.has(c) ? (normalizeDateInput(v) ?? v) : (numericCols.has(c) ? normalizeNumberStr(v) : v)
+    const norm = (v: any, c: number) =>
+      dateCols.has(c) ? (normalizeDateInput(v) ?? v) : (NUMERIC_COLS.has(c) ? normalizeNumberStr(v) : v)
 
     if (typeof (params as any)?.text === 'string') {
       const rows = ((params as any).text as string).split(/\r?\n/)
@@ -249,7 +418,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
           if (locked) { await univerAPI.undo(); try { toast.add({ title: 'Строка/ячейка заблокирована', color: 'warning' }) } catch {}; return }
         }
       }
-      const numericCols = new Set([9, 16, 17, 24, 25, 26])
       const rows = endRow - startRow + 1, cols = endCol - startCol + 1
       if (rows > 0 && cols > 0) {
         const block = aws.getRange(startRow, startCol, rows, cols)
@@ -260,7 +428,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
             const absCol = startCol + c; const orig = toStr(rowValues[c])
             if (dateCols.has(absCol)) {
               const nd = normalizeDateInput(orig); if (nd && orig !== nd) values[r][c] = { v: nd }
-            } else if (numericCols.has(absCol)) {
+            } else if (NUMERIC_COLS.has(absCol)) {
               const nn = orig.replace(/\s+/g, '').replace(',', '.'); if (orig !== nn) values[r][c] = { v: nn }
             }
           }
@@ -274,7 +442,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
         let has = false; for (let c = 0; c <= 26; c++) if (toStr(rowVals[c])) { has = true; break }
         if (!has && !idStr) continue
         if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
-          updateDtos.push(buildSR(rowVals, listName, Number(idStr)))
+          let dto = buildSR(rowVals, listName, Number(idStr))
+          if (me?.roleCode === 'ROLE_MANAGER') {
+            const arr = (sheetStore.records as any)?.[listName] as TransportAccounting[] | undefined
+            const prevRec = Array.isArray(arr) ? arr[r - 1] : undefined
+            dto = maskDtoForManager(dto, listName, r, sheetStore, prevRec)
+          }
+          updateDtos.push(dto)
         } else if (has) {
           createDtos.push(buildSR(rowVals, listName))
         }
@@ -294,10 +468,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
   })
 
   const PASTE_TRIGGERS = new Set([
-  'sheet.command.clipboard-paste',
-  'sheet.command.paste', 'sheet.command.paste-values',
-  'sheet.command.paste-formula', 'sheet.command.paste-all',
-])
+    'sheet.command.clipboard-paste',
+    'sheet.command.paste', 'sheet.command.paste-values',
+    'sheet.command.paste-formula', 'sheet.command.paste-all',
+  ])
 
   const offValueChanged = univerAPI.addEvent(univerAPI.Event.SheetValueChanged, async (params: any) => {
     // гейты: инициализация/тихий режим + период вставки + явные триггеры вставки
@@ -322,7 +496,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (!cv || typeof cv !== 'object') return
 
     // row0 -> Set<col0>, исключаем заголовок и ID колонку
-    const perRow = new Map<number, Set<number>>()
+    const perRowRaw = new Map<number, Set<number>>()
     for (const rk of Object.keys(cv)) {
       const rowObj = cv[rk]; if (!rowObj) continue
       for (const ck of Object.keys(rowObj)) {
@@ -331,13 +505,49 @@ export function registerUniverEvents(univerAPI: FUniver) {
         const row0 = Number(rk), col0 = Number(ck)
         if (!Number.isFinite(row0) || !Number.isFinite(col0)) continue
         if (row0 <= 0 || col0 === 27) continue
-        ;(perRow.get(row0) ?? perRow.set(row0, new Set()).get(row0)!).add(col0)
+        ;(perRowRaw.get(row0) ?? perRowRaw.set(row0, new Set()).get(row0)!).add(col0)
       }
     }
-    if (perRow.size === 0) return
+    if (perRowRaw.size === 0) return
 
     const listName = sheet.getName?.() || ''
     const store = useSheetStore()
+    const me = await getMe()
+
+    // === Жёсткая защита + мягкий проход: откатываем ТОЛЬКО заблокированные ячейки, остальные продолжаем обрабатывать ===
+    let hadLocked = false
+    const lockedCells: Array<{ row0: number, col0: number }> = []
+    const perRowAllowed = new Map<number, Set<number>>()
+
+    if (me?.roleCode === 'ROLE_MANAGER') {
+      for (const [row0, cols] of perRowRaw) {
+        const allowed = new Set<number>()
+        for (const col0 of cols) {
+          if (isCellLockedForManager(listName, row0, col0, store)) {
+            hadLocked = true
+            lockedCells.push({ row0, col0 })
+          } else {
+            allowed.add(col0)
+          }
+        }
+        if (allowed.size) perRowAllowed.set(row0, allowed)
+      }
+
+      if (hadLocked) {
+        revertLockedCells(ws, listName, lockedCells, store)
+        try {
+          useToast().add({
+            title: 'Ячейка заблокирована',
+            description: 'Некоторые изменения отклонены: у менеджера нет прав редактировать эти колонки.',
+            color: 'warning',
+            duration: 2800
+          })
+        } catch {}
+      }
+    }
+
+    const perRow = me?.roleCode === 'ROLE_MANAGER' ? perRowAllowed : perRowRaw
+    if (perRow.size === 0) return
 
     // 1) Валидация: в числовые колонки не допускаем текст/ошибки (#ССЫЛКА, #ДЕЛ/0! и т.п.)
     {
@@ -351,7 +561,16 @@ export function registerUniverEvents(univerAPI: FUniver) {
         if (invalid) break
       }
       if (invalid) {
-        await univerAPI.undo()
+        // откатываем неверные числа (без undo)
+        try { univerStore.beginQuiet?.() } catch {}
+        try {
+          for (const [row0, cols] of perRow) {
+            for (const col0 of cols) {
+              if (!NUMERIC_COLS.has(col0)) continue
+              ws.getRange(row0, col0).setValue({ v: '' })
+            }
+          }
+        } finally { try { univerStore.endQuiet?.() } catch {} }
         try {
           useToast().add({
             title: 'Только числа',
@@ -423,7 +642,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
     if (!rowsToProcess.length) return
 
-    // 3) Антидубль на случай каскадов
+    // 3) Антидубль
     const key = (r: number) => `${listName}#${r}`
     for (const r of rowsToProcess) {
       if (processingRows.has(key(r))) return
@@ -446,9 +665,16 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
         const idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim()
         const idNum = Number(idStr)
+        const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined
+        const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined
 
         if (Number.isFinite(idNum) && idNum > 0) {
-          updateDtos.push({ ...buildSR(rowVals, listName, idNum), id: idNum })
+          let dto = { ...buildSR(rowVals, listName, idNum), id: idNum }
+          const me2 = await getMe()
+          if (me2?.roleCode === 'ROLE_MANAGER') {
+            dto = maskDtoForManager(dto, listName, row0, store, prevRec)
+          }
+          updateDtos.push(dto)
         } else {
           if (rowHasData(rowVals)) {
             try { store.anchorCreateRow?.(listName, row0) } catch {}
@@ -470,7 +696,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
       for (const r of rowsToProcess) processingRows.delete(key(r))
     }
   })
-
 
   // ====== Disposer ======
   return () => {

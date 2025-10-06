@@ -153,6 +153,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     }
   };
 
+  // --- ВСЕГДА заблокированные колонки для менеджера (E,K,L,M,R,T,Z,AA,AB) ---
+  const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27]);
+
   const applyRowStyles = (sheet: any, item: any, rowIndex: number) => {
     const isManager = me?.roleCode === 'ROLE_MANAGER';
     const isAdminOrBuh = me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH';
@@ -168,10 +171,15 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         }
       }
     }
-    for (let col = 0; col < 27; col++) { // exclude ID style
+
+    // 0..26 — не трогаем ID (27) чтобы не сбить стиль 'id'
+    for (let col = 0; col < 27; col++) {
       let s = 'ar';
-      if ([25, 26].includes(col) || (isManager && blocked.has(col))) s = 'lockedCol';
-      else if (item?.managerBlock && !isAdminOrBuh) s = 'lockedRow';
+      if (isManager && (MANAGER_LOCKED_COLUMNS.has(col) || blocked.has(col))) {
+        s = 'lockedCol';
+      } else if (item?.managerBlock && !isAdminOrBuh) {
+        s = 'lockedRow';
+      }
       sheet.getRange(rowIndex, col).setValue({ s });
     }
   };
@@ -207,8 +215,6 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     }
     initialRowIndexMap.set(periodName, rowIndexMap);
 
-    const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27]);
-
     const totalRows = data.length + rowsToAdd;
     tr.value = totalRows;
 
@@ -217,8 +223,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       for (let c = 0; c < 28; c++) {
         let style = 'a';
         if (c === 27) style = 'id';
-        else if (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(c)) style = 'lockedCol';
-        else if ([25, 26].includes(c)) style = 'lockedCol';
+        else if (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(c)) style = 'lockedCol'; // <- ВСЕГДА для менеджера
         else if (c === 0) style = 'ar';
         empty[c] = { v: '', s: style };
       }
@@ -253,6 +258,8 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     name: 'TransportAccounting',
     styles, sheets: sheetsDef, resources: []
   });
+
+  console.log('records', records['09.2025'])
 
   // сохранить API в стор
   try {
