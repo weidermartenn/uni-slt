@@ -260,7 +260,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
     try {
       for (const { row0, col0 } of lockedCells) {
         const prev = getPrevValueForCell(listName, row0, col0, store)
-        ws.getRange(row0, col0).setValue({ v: prev })
+        // Возвращаем и значение, и стиль заблокированной колонки
+        ws.getRange(row0, col0).setValue({ v: prev, s: 'lockedCol' })
       }
     } finally {
       try { univerStore.endQuiet?.() } catch {}
@@ -274,6 +275,21 @@ export function registerUniverEvents(univerAPI: FUniver) {
     col0: number,
     store: ReturnType<typeof useSheetStore>
   ) => revertLockedCells(ws, listName, [{ row0, col0 }], store)
+
+  // Применить locked-стиль для всех "всегда заблокированных" колонок на указанной строке (только для менеджера)
+  const paintManagerLockedColsOnRow = async (ws: any, row0: number) => {
+    const me = await getMe()
+    if (me?.roleCode !== 'ROLE_MANAGER') return
+    try { univerStore.beginQuiet?.() } catch {}
+    try {
+      for (const col of MANAGER_LOCKED_COLUMNS) {
+        if (col === 27) continue // ID-колонка имеет свой стиль 'id'
+        ws.getRange(row0, col).setValue({ s: 'lockedCol' })
+      }
+    } finally {
+      try { univerStore.endQuiet?.() } catch {}
+    }
+  }
 
   // ====== Единичный подтверждённый ввод ======
   const handleRowChange = async (row: number, col: number) => {
@@ -324,8 +340,15 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (!idStr) {
       if (requestedRows.has(key)) return
       requestedRows.add(key)
-      try { sheetStore.anchorCreateRow(listName, row); await sheetStore.addRecords([buildSR(rowVals, listName)]); highlightRow(aws, row) }
-      finally { requestedRows.delete(key) }
+      try {
+        sheetStore.anchorCreateRow(listName, row)
+        await sheetStore.addRecords([buildSR(rowVals, listName)])
+        // Сразу прокрасим заблокированные колонки для менеджера в только что созданной строке
+        await paintManagerLockedColsOnRow(aws, row)
+        highlightRow(aws, row)
+      } finally {
+        requestedRows.delete(key)
+      }
       return
     }
 
@@ -435,12 +458,16 @@ export function registerUniverEvents(univerAPI: FUniver) {
         }
         block.setValues(values)
       }
+
       const createDtos: any[] = [], updateDtos: any[] = []
+      const createdRows: number[] = []
+
       for (let r = startRow; r <= endRow; r++) {
         const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
         const idStr = toStr(rowVals[27])
         let has = false; for (let c = 0; c <= 26; c++) if (toStr(rowVals[c])) { has = true; break }
         if (!has && !idStr) continue
+
         if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
           let dto = buildSR(rowVals, listName, Number(idStr))
           if (me?.roleCode === 'ROLE_MANAGER') {
@@ -451,14 +478,22 @@ export function registerUniverEvents(univerAPI: FUniver) {
           updateDtos.push(dto)
         } else if (has) {
           createDtos.push(buildSR(rowVals, listName))
+          createdRows.push(r)
         }
       }
+
       if (createDtos.length) await sheetStore.addRecords(createDtos)
       if (updateDtos.length) await sheetStore.updateRecords(updateDtos)
-      if (createDtos.length || updateDtos.length) for (let r = startRow; r <= endRow; r++) {
-        const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
-        let has = false; for (let c = 0; c <= 26; c++) if (toStr(rowVals[c])) { has = true; break }
-        if (has || toStr(rowVals[27])) highlightRow(aws, r)
+
+      // Сразу прокрасим заблокированные колонки в созданных строках
+      for (const r of createdRows) await paintManagerLockedColsOnRow(aws, r)
+
+      if (createDtos.length || updateDtos.length) {
+        for (let r = startRow; r <= endRow; r++) {
+          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
+          let has = false; for (let c = 0; c <= 26; c++) if (toStr(rowVals[c])) { has = true; break }
+          if (has || toStr(rowVals[27])) highlightRow(aws, r)
+        }
       }
     } catch (e) {
       console.error('[univer-events] paste handler failed:', e)
@@ -514,7 +549,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const store = useSheetStore()
     const me = await getMe()
 
-    // === Жёсткая защита + мягкий проход: откатываем ТОЛЬКО заблокированные ячейки, остальные продолжаем обрабатывать ===
+    // Жёсткая защита + мягкий проход: откатываем ТОЛЬКО заблокированные ячейки, остальные продолжаем обрабатывать
     let hadLocked = false
     const lockedCells: Array<{ row0: number, col0: number }> = []
     const perRowAllowed = new Map<number, Set<number>>()
@@ -549,7 +584,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const perRow = me?.roleCode === 'ROLE_MANAGER' ? perRowAllowed : perRowRaw
     if (perRow.size === 0) return
 
-    // 1) Валидация: в числовые колонки не допускаем текст/ошибки (#ССЫЛКА, #ДЕЛ/0! и т.п.)
+    // 1) Валидация чисел
     {
       let invalid = false
       for (const [row0, cols] of perRow) {
@@ -584,7 +619,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       }
     }
 
-    // 2) Определяем строки к обработке (create-кандидаты без prevRec и непустым payload, либо diff vs store)
+    // 2) Определяем строки к обработке (create/update)
     const getOld = (rec: TransportAccounting, col0: number): any => {
       switch (col0) {
         case 0:  return rec.dateOfPickup
@@ -652,6 +687,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     // 4) Патчим строку значениями из payload и делим на create/update
     const createDtos: any[] = []
     const updateDtos: any[] = []
+    const createdRows: number[] = []
 
     try {
       for (const row0 of rowsToProcess) {
@@ -679,6 +715,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
           if (rowHasData(rowVals)) {
             try { store.anchorCreateRow?.(listName, row0) } catch {}
             createDtos.push(buildSR(rowVals, listName))
+            createdRows.push(row0)
           }
         }
       }
@@ -687,6 +724,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       if (createDtos.length) await store.addRecords(createDtos)
       if (updateDtos.length) await store.updateRecords(updateDtos)
+
+      // Покрасим заблокированные колонки в созданных строках
+      for (const r of createdRows) await paintManagerLockedColsOnRow(ws, r)
 
       const aws = wb.getActiveSheet()
       for (const r of rowsToProcess) highlightRow(aws, r)

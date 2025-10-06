@@ -128,6 +128,7 @@ export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
         error: 'Значение должно быть из списка менеджеров',
       })
       .build()
+    managerR?.setWrapStrategy(WrapStrategy.CLIP)
     managerR?.setDataValidation(managerRule)
   }
 
