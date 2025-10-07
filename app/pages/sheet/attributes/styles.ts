@@ -37,7 +37,7 @@ export const styles: Record<string, IStyleData> = {
     cl: { rgb: "#FFFFFF" },
   },
   lockedCol: {
-    bg: { rgb: "#EEEEEE" },
+    bg: { rgb: "#CCCCCC" },
     vt: 2,
     pd: {
       l: 4,

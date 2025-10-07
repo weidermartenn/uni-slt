@@ -1,7 +1,7 @@
 <template>
   <UApp>
     <div class="relative w-full h-[90vh]">
-      <div
+      <!-- <div
         v-show="showFallback"
         class="absolute inset-0 flex items-center justify-center bg-white/90 dark:bg-zinc-900 z-10"
       >
@@ -9,7 +9,7 @@
           <UIcon name="i-lucide-loader-pinwheel" class="w-10 h-10 animate-spin text-zinc-900 dark:text-zinc-100" />
           <p class="mt-2 text-lg font-medium text-zinc-900 dark:text-zinc-100">Загрузка данных таблицы</p>
         </div>
-      </div>
+      </div> -->
 
       <div class="absolute flex items-center gap-10 -top-13 right-10">
         <div v-show="deleteState.pending" class="v-row items-center p-2 rounded-md bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
@@ -34,7 +34,9 @@
 <script setup lang="ts">
 import type { FUniver } from '@univerjs/core/facade';
 import { useEmployeeStore } from '~/stores/employee-store';
-import { useSheetStore } from '~/stores/sheet-store';
+import { useSheetStore } from '~/stores/sheet-store-optimized';
+import { useSheetStore as useSheet } from '~/stores/sheet-store';
+import { useUniverStore } from '~/stores/univer-store';
 
 definePageMeta({ ssr: false });
 useHead({ title: 'СЛТ Транспортный учет' });
@@ -86,7 +88,7 @@ async function onDeleteClick() {
     return;
   }
 
-  const { start1, end1 } = selection;
+  const { start1, end1, ws, range } = selection;
 
   // Первая кнопка — режим подтверждения
   if (!deleteState.pending) {
@@ -118,13 +120,32 @@ async function onDeleteClick() {
     .map((row) => Number(row?.[ID_COL_INDEX]))
     .filter((id) => Number.isFinite(id) && id > 0);
 
-  // 2) Немедленно очистим UI (даже если ids пустой — это ок)
-  const rows = sel.end1 - sel.start1 + 1;
-  const cols = 28;
-  const empty = Array.from({ length: rows }, () =>
-    Array.from({ length: cols }, () => ({ v: '' }))
-  );
-  sel.range.setValues?.(empty);
+  if (ids.length > 0) {
+    const rows = sel.end1 - sel.start1 + 1
+    const cols = 28 
+    const empty = Array.from({ length: rows }, () => 
+      Array.from({ length: cols }, () => ({ v: '' }))
+    )
+
+    try {
+      const { getLifeCycleState } = await import('~/composables/lifecycle');
+      const { rendered } = getLifeCycleState(api.value!)
+
+      if (rendered?.value) {
+        const univerStore = useUniverStore()
+        try {
+          univerStore.beginQuiet?.() 
+          range.setValues?.(empty)
+        } finally {
+          univerStore.endQuiet?.()
+        }
+      } else {
+        range.setValues?.(empty)
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
 
   // даём UI возможность отрисоваться до сетевого запроса
   await nextTick();
@@ -147,7 +168,14 @@ async function onDeleteClick() {
     const store = useSheetStore();
     showBusy.value = true;
 
+    console.log(`[Delete] Начало удаления ${ids.length} записей`);
+    const startTime = performance.now() 
+
     await store.deleteRecords(ids);
+
+    const endTime = performance.now()
+
+    console.log(`[Delete] Конец удаления ${ids.length} записей. Время: ${endTime - startTime} ms`);
 
     // Успешно
     toast.add({
@@ -174,12 +202,12 @@ async function onDeleteClick() {
 onMounted(async () => {
   const { initUniver } = await import('~/composables/initUniver');
   const { getLifeCycleState } = await import('~/composables/lifecycle');
-  const sheetStore = useSheetStore();
+  const store = useSheet();
   const employeeStore = useEmployeeStore();
 
-  await sheetStore.fetchRecords();
+  await store.fetchRecords();
   await employeeStore.fetchEmployees();
-  records.value = sheetStore.records;
+  records.value = store.records;
   const dataLoaded = ref(true);
 
   api.value = await initUniver(records.value);
@@ -206,5 +234,8 @@ onMounted(async () => {
     }
 
   }, { immediate: true });
+
+  const { cleanup } = useUniverWorker()
+  onBeforeUnmount(() => { cleanup })
 });
 </script>

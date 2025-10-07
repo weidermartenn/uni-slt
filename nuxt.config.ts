@@ -20,7 +20,8 @@ export default defineNuxtConfig({
       websocket: true
     },
     prerender: {
-      crawlLinks: true
+      crawlLinks: true,
+      routes: ['/workers/api-worker.js']
     }
   },
   experimental: {
@@ -43,6 +44,7 @@ export default defineNuxtConfig({
     build: {
       sourcemap: false, cssMinify: true,
       rollupOptions: {
+        external : ['/workers/api-worker.js'],
         output: {
           manualChunks: {
             'vue-vendor': ['vue', '@vue/shared', '@vue/runtime-core', '@vue/runtime-dom'],

@@ -1,12 +1,15 @@
 // univer-events.ts
 import type { FUniver } from '@univerjs/presets'
 import { useToast } from '#imports'
-import { useSheetStore } from '~/stores/sheet-store'
+import { useSheetStore } from '~/stores/sheet-store-optimized'
 import { useUniverStore } from '~/stores/univer-store'
 import { getUser } from './getUser'
 import type { TransportAccounting } from '~/entities/TransportAccountingDto/types'
+import { useUniverWorker } from '~/composables/useUniverWorker'
 
 export function registerUniverEvents(univerAPI: FUniver) {
+  const { handleRowChangeOptimized, queueBatchOperation } = useUniverWorker()
+  
   // ====== Константы/флаги ======
   const dateCols = new Set([0, 4, 11, 12, 19]) // A,E,L,M,T (0-based)
   // ВСЕГДА заблокированные для менеджера: E,K,L,M,R,T,Z,AA,AB
@@ -215,6 +218,27 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return dto
   }
 
+  // НОВАЯ ФУНКЦИЯ: создает безопасное DTO для менеджера при создании строк
+  const createManagerSafeDto = (
+    dto: any,
+    listName: string,
+    row0: number,
+    store: ReturnType<typeof useSheetStore>
+  ) => {
+    const safeDto = { ...dto }
+    
+    // Для менеджера очищаем все заблокированные колонки в новом DTO
+    for (let col = 0; col <= 26; col++) {
+      if (isCellLockedForManager(listName, row0, col, store)) {
+        const key = COL_TO_KEY[col]
+        // @ts-expect-error — доступ по ключу
+        safeDto[key] = '' // Очищаем заблокированные поля
+      }
+    }
+    
+    return safeDto
+  }
+
   const rowHasData = (rv: any[]): boolean => {
     for (let c = 0; c <= 26; c++) {
       const cell = rv?.[c]
@@ -297,6 +321,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const aws = wb.getActiveSheet(); const s = aws?.getSheet(); if (!s || row === 0) return
     const listName = s.getName(); const sheetStore = useSheetStore(); const toast = useToast()
 
+    // ИСПРАВЛЕНИЕ: ранняя проверка блокировки для менеджера
+    const me = await getMe()
+    if (me?.roleCode === 'ROLE_MANAGER' && isCellLockedForManager(listName, row, col, sheetStore)) {
+      revertSingleLockedCell(aws, listName, row, col, sheetStore)
+      // ИСПРАВЛЕНИЕ: подавлен тост при попытке редактирования заблокированной ячейки
+      return
+    }
+
     if (dateCols.has(col)) {
       const raw = s.getCell(row, col)
       const n = normalizeDateInput(raw)
@@ -341,8 +373,12 @@ export function registerUniverEvents(univerAPI: FUniver) {
       if (requestedRows.has(key)) return
       requestedRows.add(key)
       try {
-        sheetStore.anchorCreateRow(listName, row)
-        await sheetStore.addRecords([buildSR(rowVals, listName)])
+        // ИСПРАВЛЕНИЕ: для менеджера создаем DTO только с разрешенными колонками
+        let createDto = buildSR(rowVals, listName)
+        if (me?.roleCode === 'ROLE_MANAGER') {
+          createDto = createManagerSafeDto(createDto, listName, row, sheetStore)
+        }
+        await sheetStore.addRecords([createDto])
         // Сразу прокрасим заблокированные колонки для менеджера в только что созданной строке
         await paintManagerLockedColsOnRow(aws, row)
         highlightRow(aws, row)
@@ -355,7 +391,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const idNum = Number(idStr); if (!Number.isFinite(idNum) || idNum <= 0) return
 
     // Менеджер: перед апдейтом маскируем заблокированные поля
-    const me = await getMe()
     const arr = (sheetStore.records as any)?.[listName] as TransportAccounting[] | undefined
     const prevRec = Array.isArray(arr) ? arr[row - 1] : undefined
 
@@ -370,17 +405,40 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   const offEditEnded = univerAPI.addEvent(univerAPI.Event.SheetEditEnded, async (params: any) => {
     if (batchPasteInProgress) return
-    const { row, column: col, isConfirm } = params; if (!isConfirm) return
-    const wb = univerAPI.getActiveWorkbook(); const aws = wb?.getActiveSheet(); const s = aws?.getSheet()
+    const { row, column: col, isConfirm } = params
+    if (!isConfirm) return
+
+    const wb = univerAPI.getActiveWorkbook() 
+    const aws = wb?.getActiveSheet()
+    const s = aws?.getSheet()
     if (!s || row === 0) return
-    const me = await getMe(); const sheetStore = useSheetStore(); const listName = s.getName()
+
+    const me = await getMe()
+    const sheetStore = useSheetStore()
+    const listName = s.getName()
+
     if (me?.roleCode === 'ROLE_MANAGER' && isCellLockedForManager(listName, row, col, sheetStore)) {
       // Надёжно откатываем вручную вместо undo
       revertSingleLockedCell(aws, listName, row, col, sheetStore)
-      try { useToast().add({ title: 'Ячейка заблокирована', color: 'warning', duration: 2500 }) } catch {}
+      // ИСПРАВЛЕНИЕ: подавлен тост при попытке редактирования заблокированной ячейки
       return
     }
-    await handleRowChange(row, col)
+
+    // ИСПРАВЛЕНИЕ: правильное получение значений строки
+    const rowVals = aws?.getRange(row, 0, 1, 28).getValues()?.[0] ?? []
+    const idStr = toStr(rowVals[27])
+    
+    // Используем оптимизированный обработчик с передачей дополнительных параметров
+    await handleRowChangeOptimized(
+      row, 
+      col, 
+      rowVals, 
+      listName, 
+      idStr, 
+      buildSR, 
+      maskDtoForManager,
+      createManagerSafeDto // ПЕРЕДАЕМ НОВУЮ ФУНКЦИЮ
+    )
   })
 
   // ====== Вставка: до / после ======
@@ -427,74 +485,110 @@ export function registerUniverEvents(univerAPI: FUniver) {
   })
 
   const offPasted = univerAPI.addEvent(univerAPI.Event.ClipboardPasted, async () => {
-    const wb = univerAPI.getActiveWorkbook(); const aws = wb?.getActiveSheet(); const s = aws?.getSheet()
-    if (!wb || !aws || !s) { batchPasteInProgress = false; return }
+    const wb = univerAPI.getActiveWorkbook()
+    const aws = wb?.getActiveSheet()
+    const s = aws?.getSheet()
+    if (!wb || !aws || !s) { 
+      batchPasteInProgress = false
+      return 
+    }
+    
     try {
-      const active = aws.getSelection()?.getActiveRange?.()?.getRange(); if (!active) return
-      const startRow = Math.max(1, active.startRow), endRow = active.endRow, startCol = active.startColumn, endCol = active.endColumn
-      const listName = s.getName(); const sheetStore = useSheetStore(); const toast = useToast()
+      const active = aws.getSelection()?.getActiveRange?.()?.getRange()
+      if (!active) return
+      
+      const startRow = Math.max(1, active.startRow)
+      const endRow = active.endRow
+      const startCol = active.startColumn
+      const endCol = active.endColumn
+      
+      const listName = s.getName()
+      const sheetStore = useSheetStore()
       const me = await getMe()
+
+      // Проверка блокировки для менеджера
       if (me?.roleCode === 'ROLE_MANAGER') {
         for (let r = startRow; r <= endRow; r++) {
           let locked = false
-          for (let c = startCol; c <= endCol; c++) if (isCellLockedForManager(listName, r, c, sheetStore)) { locked = true; break }
-          if (locked) { await univerAPI.undo(); try { toast.add({ title: 'Строка/ячейка заблокирована', color: 'warning' }) } catch {}; return }
-        }
-      }
-      const rows = endRow - startRow + 1, cols = endCol - startCol + 1
-      if (rows > 0 && cols > 0) {
-        const block = aws.getRange(startRow, startCol, rows, cols)
-        const values = block.getValues()
-        for (let r = 0; r < rows; r++) {
-          const rowValues = values[r]; if (!rowValues) continue
-          for (let c = 0; c < cols; c++) {
-            const absCol = startCol + c; const orig = toStr(rowValues[c])
-            if (dateCols.has(absCol)) {
-              const nd = normalizeDateInput(orig); if (nd && orig !== nd) values[r][c] = { v: nd }
-            } else if (NUMERIC_COLS.has(absCol)) {
-              const nn = orig.replace(/\s+/g, '').replace(',', '.'); if (orig !== nn) values[r][c] = { v: nn }
+          for (let c = startCol; c <= endCol; c++) {
+            if (isCellLockedForManager(listName, r, c, sheetStore)) { 
+              locked = true
+              break 
             }
           }
+          if (locked) { 
+            await univerAPI.undo()
+            // ИСПРАВЛЕНИЕ: подавлен тост при попытке вставки в заблокированную область
+            return 
+          }
         }
-        block.setValues(values)
       }
 
-      const createDtos: any[] = [], updateDtos: any[] = []
+      // ОПТИМИЗИРОВАННАЯ обработка вставки - группируем операции
+      const createDtos: any[] = []
+      const updateDtos: any[] = []
       const createdRows: number[] = []
 
       for (let r = startRow; r <= endRow; r++) {
         const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
         const idStr = toStr(rowVals[27])
-        let has = false; for (let c = 0; c <= 26; c++) if (toStr(rowVals[c])) { has = true; break }
-        if (!has && !idStr) continue
+        let hasData = false
+        
+        for (let c = 0; c <= 26; c++) {
+          if (toStr(rowVals[c])) { 
+            hasData = true
+            break 
+          }
+        }
 
         if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
+          // Обновление существующей записи
           let dto = buildSR(rowVals, listName, Number(idStr))
           if (me?.roleCode === 'ROLE_MANAGER') {
-            const arr = (sheetStore.records as any)?.[listName] as TransportAccounting[] | undefined
+            const arr = (sheetStore.records as any)?.[listName]
             const prevRec = Array.isArray(arr) ? arr[r - 1] : undefined
             dto = maskDtoForManager(dto, listName, r, sheetStore, prevRec)
           }
           updateDtos.push(dto)
-        } else if (has) {
-          createDtos.push(buildSR(rowVals, listName))
+        } else if (hasData) {
+          // Создание новой записи - ИСПРАВЛЕНИЕ: для менеджера создаем безопасное DTO
+          let createDto = buildSR(rowVals, listName)
+          if (me?.roleCode === 'ROLE_MANAGER') {
+            createDto = createManagerSafeDto(createDto, listName, r, sheetStore)
+          }
+          createDtos.push(createDto)
           createdRows.push(r)
         }
       }
 
-      if (createDtos.length) await sheetStore.addRecords(createDtos)
-      if (updateDtos.length) await sheetStore.updateRecords(updateDtos)
+      // ОПТИМИЗИРОВАННАЯ отправка - одним запросом для каждого типа
+      if (createDtos.length > 0) {
+        await sheetStore.addRecords(createDtos)
+      }
+      
+      if (updateDtos.length > 0) {
+        await sheetStore.updateRecords(updateDtos)
+      }
 
-      // Сразу прокрасим заблокированные колонки в созданных строках
-      for (const r of createdRows) await paintManagerLockedColsOnRow(aws, r)
-
-      if (createDtos.length || updateDtos.length) {
-        for (let r = startRow; r <= endRow; r++) {
-          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
-          let has = false; for (let c = 0; c <= 26; c++) if (toStr(rowVals[c])) { has = true; break }
-          if (has || toStr(rowVals[27])) highlightRow(aws, r)
+      // Покраска заблокированных колонок и подсветка
+      for (const r of createdRows) {
+        await paintManagerLockedColsOnRow(aws, r)
+      }
+      
+      for (let r = startRow; r <= endRow; r++) {
+        const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? []
+        let hasData = false
+        for (let c = 0; c <= 26; c++) {
+          if (toStr(rowVals[c])) { 
+            hasData = true
+            break 
+          }
+        }
+        if (hasData || toStr(rowVals[27])) {
+          highlightRow(aws, r)
         }
       }
+      
     } catch (e) {
       console.error('[univer-events] paste handler failed:', e)
     } finally {
@@ -512,6 +606,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     // гейты: инициализация/тихий режим + период вставки + явные триггеры вставки
     if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return
     if (batchPasteInProgress) return
+
     const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? ''
     if (PASTE_TRIGGERS.has(trigger)) return
 
@@ -570,14 +665,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       if (hadLocked) {
         revertLockedCells(ws, listName, lockedCells, store)
-        try {
-          useToast().add({
-            title: 'Ячейка заблокирована',
-            description: 'Некоторые изменения отклонены: у менеджера нет прав редактировать эти колонки.',
-            color: 'warning',
-            duration: 2800
-          })
-        } catch {}
+        // ИСПРАВЛЕНИЕ: подавлен тост при массовом изменении заблокированных ячеек
       }
     }
 
@@ -693,10 +781,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
       for (const row0 of rowsToProcess) {
         const rowVals = ws.getRange(row0, 0, 1, 28).getValues()?.[0] ?? []
         const cols = perRow.get(row0)!
+
         for (const c of cols) {
           const vFromPayload = cv[String(row0)]?.[String(c)]?.v
-          if (rowVals[c] && typeof rowVals[c] === 'object' && 'v' in rowVals[c]) rowVals[c].v = vFromPayload
-          else rowVals[c] = { v: vFromPayload }
+          if (rowVals[c] && typeof rowVals[c] === 'object' && 'v' in rowVals[c]) {
+            rowVals[c].v = vFromPayload 
+          } else {
+            rowVals[c] = { v: vFromPayload }
+          }
         }
 
         const idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim()
@@ -706,15 +798,18 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
         if (Number.isFinite(idNum) && idNum > 0) {
           let dto = { ...buildSR(rowVals, listName, idNum), id: idNum }
-          const me2 = await getMe()
-          if (me2?.roleCode === 'ROLE_MANAGER') {
+          if (me?.roleCode === 'ROLE_MANAGER') {
             dto = maskDtoForManager(dto, listName, row0, store, prevRec)
           }
           updateDtos.push(dto)
         } else {
           if (rowHasData(rowVals)) {
-            try { store.anchorCreateRow?.(listName, row0) } catch {}
-            createDtos.push(buildSR(rowVals, listName))
+            // ИСПРАВЛЕНИЕ: для менеджера создаем безопасное DTO
+            let createDto = buildSR(rowVals, listName)
+            if (me?.roleCode === 'ROLE_MANAGER') {
+              createDto = createManagerSafeDto(createDto, listName, row0, store)
+            }
+            createDtos.push(createDto)
             createdRows.push(row0)
           }
         }
