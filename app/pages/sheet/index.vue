@@ -34,8 +34,7 @@
 <script setup lang="ts">
 import type { FUniver } from '@univerjs/core/facade';
 import { useEmployeeStore } from '~/stores/employee-store';
-import { useSheetStore } from '~/stores/sheet-store-optimized';
-import { useSheetStore as useSheet } from '~/stores/sheet-store';
+import { useSheetStore } from '~/stores/sheet-store';
 import { useUniverStore } from '~/stores/univer-store';
 
 definePageMeta({ ssr: false });
@@ -202,7 +201,7 @@ async function onDeleteClick() {
 onMounted(async () => {
   const { initUniver } = await import('~/composables/initUniver');
   const { getLifeCycleState } = await import('~/composables/lifecycle');
-  const store = useSheet();
+  const store = useSheetStore();
   const employeeStore = useEmployeeStore();
 
   await store.fetchRecords();
