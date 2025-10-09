@@ -19,6 +19,7 @@ export const useEmployeeStore = defineStore("employee", {
   state: () => ({
     employees: [],
     employeesAllInfo: [] as User[],
+    listForLK: [] as any[]
   }),
 
   actions: {
@@ -39,6 +40,13 @@ export const useEmployeeStore = defineStore("employee", {
     async deleteEmployee(id: number) {
       await $fetch(`${kingsApiBase}/admin/employees/${id}`, { method: "DELETE", headers: authHeaders() });
       this.employeesAllInfo = this.employeesAllInfo.filter(u => u.id !== id);
+    },
+
+    async fetchForLK() {
+      const userInfo = getUser();
+      const id = userInfo?.id
+      const data = await $fetch(`${kingsApiBase}/user/${id}`, { method: 'GET', headers: authHeaders() })
+      this.listForLK = data
     }
   }
 });
