@@ -17,6 +17,7 @@
     "@univerjs/presets": "^0.10.8",
     "@univerjs/ui-adapter-vue3": "^0.10.8",
     "@vueuse/nuxt": "^13.9.0",
+    "gsap": "^3.13.0",
     "maska": "^3.2.0",
     "nanoid": "^5.1.5",
     "nuxt": "^4.1.3",
