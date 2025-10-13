@@ -683,13 +683,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const offValueChanged = univerAPI.addEvent(
     univerAPI.Event.SheetValueChanged,
     async (params: any) => {
+      // Guards
       if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return;
       if (batchPasteInProgress) return;
 
       const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? '';
-      console.log('[univer-events] value changed trigger:', trigger);
 
-      // 1) Пропускаем явные вставки из буфера обмена
+      // Пропускаем явные вставки — у них свой пайплайн
       if (PASTE_TRIGGERS.has(trigger)) return;
 
       const wb = univerAPI.getActiveWorkbook();
@@ -701,102 +701,132 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const subUnitId = params?.subUnitId ?? params?.payload?.params?.subUnitId;
       if (activeSheetId && subUnitId && subUnitId !== activeSheetId) return;
 
-      // 2) Извлекаем изменения
-      const cv: Record<string, Record<string, any>> | undefined =
-        params?.cellValue ?? params?.payload?.params?.cellValue;
-      if (!cv || typeof cv !== 'object') return;
+      // cellValue из события
+      const payload = params?.payload;
+      const pparams = payload?.params ?? {};
+      let cv: Record<string, Record<string, any>> | undefined =
+        params?.cellValue ?? pparams?.cellValue ?? payload?.cellValue;
 
-      // 3) Нормализация AUTO-FILL: копируем seed без инкремента дат/чисел
-      if (trigger === 'sheet.command.auto-fill') {
-        try {
-          const rowKeys = Object.keys(cv);
-          if (rowKeys.length) {
-            const rowIndexes = rowKeys.map(Number).sort((a, b) => a - b);
-
-            // Собираем все колонки, попавшие в изменение
-            const colSet = new Set<number>();
-            for (const r of rowIndexes) {
-              const rowObj = cv[String(r)] || {};
-              for (const ck of Object.keys(rowObj)) {
-                const c = Number(ck);
-                if (Number.isFinite(c)) colSet.add(c);
-              }
+      // Если move-range и cv нет — синтезируем из целевого диапазона
+      const isMoveRange = trigger === 'sheet.command.move-range';
+      if ((!cv || Object.keys(cv).length === 0) && isMoveRange) {
+        const normRange = (r: any) => {
+          if (!r || typeof r !== 'object') return null;
+          const sr = Number(r.startRow ?? r.rowStart ?? r.row ?? r.r1);
+          const sc = Number(r.startColumn ?? r.colStart ?? r.column ?? r.c1);
+          const er = Number(r.endRow ?? r.rowEnd ?? r.r2);
+          const ec = Number(r.endColumn ?? r.colEnd ?? r.c2);
+          const rc = Number(r.rowCount ?? r.rows);
+          const cc = Number(r.columnCount ?? r.cols ?? r.columns);
+          if (Number.isFinite(sr) && Number.isFinite(sc)) {
+            if (Number.isFinite(rc) && Number.isFinite(cc)) {
+              return { startRow: sr, startColumn: sc, rowCount: rc, columnCount: cc };
             }
-            const colIndexes = Array.from(colSet).sort((a, b) => a - b);
-
-            const minRow = rowIndexes[0];
-            const maxRow = rowIndexes[rowIndexes.length - 1];
-            const minCol = colIndexes[0];
-            const maxCol = colIndexes[colIndexes.length - 1];
-
-            // Эвристика направления: вертикаль, если строк больше/равно столбцам
-            const isVertical = rowIndexes.length >= colIndexes.length;
-
-            const readSeed = (r: number, c: number) => {
-              try {
-                const v2d = ws.getRange(r, c, 1, 1).getValues();
-                return unwrapV(v2d?.[0]?.[0]);
-              } catch {
-                return undefined;
-              }
-            };
-
-            // seed для каждой колонки
-            const seedsByCol = new Map<number, any>();
-            for (const col of colIndexes) {
-              let seed: any = undefined;
-
-              if (isVertical) {
-                if (minRow - 1 >= 0) seed = readSeed(minRow - 1, col);
-                if (seed === undefined) seed = readSeed(maxRow + 1, col);
-              } else {
-                // Горизонтальный драг
-                if (minCol - 1 >= 0) seed = readSeed(rowIndexes[0], minCol - 1);
-                if (seed === undefined) seed = readSeed(rowIndexes[0], maxCol + 1);
-              }
-
-              // Фоллбэк: берём значение первой изменённой ячейки
-              if (seed === undefined) {
-                seed = unwrapV(cv[String(minRow)]?.[String(col)]?.v);
-              }
-
-              seedsByCol.set(col, seed);
+            if (Number.isFinite(er) && Number.isFinite(ec)) {
+              return { startRow: sr, startColumn: sc, rowCount: er - sr + 1, columnCount: ec - sc + 1 };
             }
-
-            // Применяем seed в UI и в cv (чтобы дальше create/update работали с нормализованным значением)
-            try { univerStore.beginQuiet?.(); } catch { }
-            try {
-              for (const r of rowIndexes) {
-                for (const col of colIndexes) {
-                  const seed = seedsByCol.get(col);
-                  ws.getRange(r, col).setValue({ v: seed });
-                  (cv[String(r)] ??= {})[String(col)] = { v: seed };
-                }
-              }
-            } finally {
-              try { univerStore.endQuiet?.(); } catch { }
-            }
-            // Не делаем return — даём пойти дальше по обычной цепочке
           }
-        } catch (e) {
-          console.warn('[univer-events] auto-fill normalize failed:', e);
+          return null;
+        };
+
+        const srcRaw = pparams.sourceRange ?? pparams.fromRange ?? pparams.source ?? pparams.srcRange ?? pparams.range;
+        const dstRaw = pparams.targetRange ?? pparams.toRange ?? pparams.target ?? pparams.destRange ?? pparams.destination;
+        const dstNorm = normRange(dstRaw);
+
+        let target = dstNorm;
+        if (!target) {
+          const ar = ws.getSelection?.()?.getActiveRange?.()?.getRange?.();
+          if (!ar) return;
+          target = {
+            startRow: Number(ar.startRow ?? 0),
+            startColumn: Number(ar.startColumn ?? 0),
+            rowCount: Number(ar.endRow - ar.startRow + 1),
+            columnCount: Number(ar.endColumn - ar.startColumn + 1)
+          };
+        }
+
+        const { startRow, startColumn, rowCount, columnCount } = target;
+        const values = ws.getRange(startRow, startColumn, rowCount, columnCount).getValues();
+        const synthetic: Record<string, Record<string, any>> = {};
+
+        for (let r = 0; r < rowCount; r++) {
+          const rowIdx = startRow + r;
+          const rowArr = values?.[r] ?? [];
+          for (let c = 0; c < columnCount; c++) {
+            const colIdx = startColumn + c;
+            const v = unwrapV(rowArr?.[c]);
+            if (String(v ?? '').trim() !== '') {
+              (synthetic[String(rowIdx)] ??= {})[String(colIdx)] = { v };
+            }
+          }
+        }
+
+        cv = synthetic;
+      }
+
+      if (!cv || Object.keys(cv).length === 0) return;
+
+      // AUTO-FILL: копируем seed из ячейки-источника, без инкремента
+      if (trigger === 'sheet.command.auto-fill') {
+        const rowIndexes = Object.keys(cv).map(Number).sort((a, b) => a - b);
+        const colSet = new Set<number>();
+        for (const r of rowIndexes) {
+          for (const ck of Object.keys(cv[String(r)] ?? {})) {
+            const c = Number(ck);
+            if (Number.isFinite(c)) colSet.add(c);
+          }
+        }
+        const colIndexes = Array.from(colSet).sort((a, b) => a - b);
+        if (rowIndexes.length && colIndexes.length) {
+          const minRow = rowIndexes[0];
+          const maxRow = rowIndexes[rowIndexes.length - 1];
+          const minCol = colIndexes[0];
+          const maxCol = colIndexes[colIndexes.length - 1];
+          const isVertical = rowIndexes.length >= colIndexes.length;
+
+          const readSeed = (r: number, c: number) => {
+            try {
+              const v2d = ws.getRange(r, c, 1, 1).getValues();
+              return unwrapV(v2d?.[0]?.[0]);
+            } catch {
+              return undefined;
+            }
+          };
+
+          const seedsByCol = new Map<number, any>();
+          for (const col of colIndexes) {
+            let seed: any;
+            if (isVertical) {
+              seed = (minRow - 1 >= 0 && readSeed(minRow - 1, col)) ?? readSeed(maxRow + 1, col);
+            } else {
+              seed = (minCol - 1 >= 0 && readSeed(rowIndexes[0], minCol - 1)) ?? readSeed(rowIndexes[0], maxCol + 1);
+            }
+            if (seed === undefined) seed = unwrapV(cv[String(minRow)]?.[String(col)]?.v);
+            seedsByCol.set(col, seed);
+          }
+
+          try { univerStore.beginQuiet?.(); } catch { }
+          try {
+            for (const r of rowIndexes) {
+              for (const col of colIndexes) {
+                const seed = seedsByCol.get(col);
+                ws.getRange(r, col).setValue({ v: seed });
+                (cv[String(r)] ??= {})[String(col)] = { v: seed };
+              }
+            }
+          } finally { try { univerStore.endQuiet?.(); } catch { } }
         }
       }
 
-      // 4) Собираем изменённые ячейки из cv (уже после возможной нормализации)
+      // Собираем изменённые ячейки из cv
       const perRowRaw = new Map<number, Set<number>>();
       for (const rk of Object.keys(cv)) {
+        const row0 = Number(rk);
+        if (!Number.isFinite(row0) || row0 <= 0) continue;
         const rowObj = cv[rk];
-        if (!rowObj) continue;
         for (const ck of Object.keys(rowObj)) {
-          const cell = rowObj[ck];
-          if (!cell || !Object.prototype.hasOwnProperty.call(cell, 'v')) continue;
-
-          const row0 = Number(rk);
           const col0 = Number(ck);
-          if (!Number.isFinite(row0) || !Number.isFinite(col0)) continue;
-          if (row0 <= 0 || col0 === 27) continue;
-
+          if (!Number.isFinite(col0) || col0 === 27) continue; // AB (ID) не редактируем
           (perRowRaw.get(row0) ?? perRowRaw.set(row0, new Set()).get(row0)!).add(col0);
         }
       }
@@ -806,7 +836,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const store = useSheetStore();
       const me = await getMe();
 
-      // 5) Блокировки для менеджера
+      // Блокировки для менеджера
       let hadLocked = false;
       const lockedCells: Array<{ row0: number; col0: number }> = [];
       const perRowAllowed = new Map<number, Set<number>>();
@@ -824,31 +854,25 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
           if (allowed.size) perRowAllowed.set(row0, allowed);
         }
-
         if (hadLocked) {
           revertLockedCells(ws, listName, lockedCells, store);
         }
       }
 
-      const perRow =
-        me?.roleCode === 'ROLE_MANAGER' ? perRowAllowed : perRowRaw;
+      const perRow = me?.roleCode === 'ROLE_MANAGER' ? perRowAllowed : perRowRaw;
       if (perRow.size === 0) return;
 
-      // 6) Валидация числовых полей
+      // Валидация числовых колонок
       {
         let invalid = false;
         for (const [row0, cols] of perRow) {
           for (const col0 of cols) {
             if (!NUMERIC_COLS.has(col0)) continue;
             const v = cv[String(row0)]?.[String(col0)]?.v;
-            if (!isNumericOrEmpty(v)) {
-              invalid = true;
-              break;
-            }
+            if (!isNumericOrEmpty(v)) { invalid = true; break; }
           }
           if (invalid) break;
         }
-
         if (invalid) {
           try { univerStore.beginQuiet?.(); } catch { }
           try {
@@ -858,10 +882,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
                 ws.getRange(row0, col0).setValue({ v: '' });
               }
             }
-          } finally {
-            try { univerStore.endQuiet?.(); } catch { }
-          }
-
+          } finally { try { univerStore.endQuiet?.(); } catch { } }
           try {
             useToast().add({
               title: 'Только числа',
@@ -871,30 +892,36 @@ export function registerUniverEvents(univerAPI: FUniver) {
               duration: 3000,
             });
           } catch { }
-
           return;
         }
       }
 
-      // 7) Определяем реально изменённые строки
-      const getOld = (rec: TransportAccounting, col0: number): any => {
-        const key = COL_TO_KEY[col0] as keyof TransportAccounting;
-        return rec?.[key];
-      };
+      // Список строк для обработки
+      const allowCreate = !isMoveRange;
+      const arrAll = (store.records as any)?.[listName] as TransportAccounting[] | undefined;
+      const getOld = (rec: TransportAccounting, col0: number) =>
+        (rec as any)?.[COL_TO_KEY[col0] as keyof TransportAccounting];
+      const isNonEmpty = (v: any) => String(v ?? '').trim() !== '';
 
       const rowsToProcess: number[] = [];
       for (const [row0, cols] of perRow) {
-        const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined;
-        const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined;
+        const prevRec = Array.isArray(arrAll) ? arrAll[row0 - 1] : undefined;
+
+        if (isMoveRange) {
+          let hasNonEmpty = false;
+          for (const c of cols) {
+            const v = cv[String(row0)]?.[String(c)]?.v;
+            if (isNonEmpty(v)) { hasNonEmpty = true; break; }
+          }
+          if (hasNonEmpty) rowsToProcess.push(row0);
+          continue;
+        }
 
         if (!prevRec) {
           let nonEmpty = false;
           for (const c of cols) {
             const v = cv[String(row0)]?.[String(c)]?.v;
-            if (String(v ?? '').trim() !== '') {
-              nonEmpty = true;
-              break;
-            }
+            if (isNonEmpty(v)) { nonEmpty = true; break; }
           }
           if (nonEmpty) rowsToProcess.push(row0);
           continue;
@@ -903,40 +930,50 @@ export function registerUniverEvents(univerAPI: FUniver) {
         let changed = false;
         for (const c of cols) {
           const nv = cv[String(row0)]?.[String(c)]?.v;
-          if (String(nv ?? '').trim() !== String(getOld(prevRec, c) ?? '').trim()) {
-            changed = true;
-            break;
-          }
+          const old = getOld(prevRec, c);
+          if (String(nv ?? '').trim() !== String(old ?? '').trim()) { changed = true; break; }
         }
         if (changed) rowsToProcess.push(row0);
       }
       if (!rowsToProcess.length) return;
 
-      // 8) Формируем DTO и отправляем в стор
-      const key = (r: number) => `${listName}#${r}`;
-      for (const r of rowsToProcess) {
-        if (processingRows.has(key(r))) return;
-        processingRows.add(key(r));
-      }
+      // Исключаем строки, уже в обработке
+      const keyFor = (r: number) => `${listName}#${r}`;
+      const rowsFinal = rowsToProcess.filter((r) => {
+        const k = keyFor(r);
+        const busy = processingRows.has(k);
+        if (!busy) processingRows.add(k);
+        return !busy;
+      });
+      if (!rowsFinal.length) return;
 
+      // Формируем DTO и отправляем в стор
       const createDtos: any[] = [];
       const updateDtos: any[] = [];
       const createdRows: number[] = [];
 
       try {
-        for (const row0 of rowsToProcess) {
+        for (const row0 of rowsFinal) {
           const rowVals = ws.getRange(row0, 0, 1, 28).getValues()?.[0] ?? [];
           const cols = perRow.get(row0)!;
 
           for (const c of cols) {
             const vFromPayload = cv[String(row0)]?.[String(c)]?.v;
-            rowVals[c] = { v: vFromPayload };
+            rowVals[c] = rowVals[c] && typeof rowVals[c] === 'object' && 'v' in rowVals[c]
+              ? { ...rowVals[c], v: vFromPayload }
+              : { v: vFromPayload };
           }
 
-          const idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim();
-          const idNum = Number(idStr);
-          const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined;
-          const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined;
+          // ID: сначала из листа, затем fallback к стору (важно для move-range)
+          let idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim();
+          let idNum = Number(idStr);
+          if (!Number.isFinite(idNum) || idNum <= 0) {
+            const prevRecAtRow = Array.isArray(arrAll) ? arrAll[row0 - 1] : undefined;
+            const prevId = Number(prevRecAtRow?.id);
+            if (Number.isFinite(prevId) && prevId > 0) idNum = prevId;
+          }
+
+          const prevRec = Array.isArray(arrAll) ? arrAll[row0 - 1] : undefined;
 
           if (Number.isFinite(idNum) && idNum > 0) {
             let dto = { ...buildSR(rowVals, listName, idNum), id: idNum };
@@ -945,6 +982,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
             }
             updateDtos.push(dto);
           } else {
+            if (!allowCreate) continue;
             if (rowHasData(rowVals)) {
               let createDto = buildSR(rowVals, listName);
               if (me?.roleCode === 'ROLE_MANAGER') {
@@ -956,27 +994,20 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
         }
 
-        if (createDtos.length) await store.addRecords(createDtos);
         if (updateDtos.length) await store.updateRecords(updateDtos);
+        if (createDtos.length) await store.addRecords(createDtos);
 
-        for (const r of createdRows) {
-          await paintManagerLockedColsOnRow(ws, r);
-        }
+        for (const r of createdRows) await paintManagerLockedColsOnRow(ws, r);
 
         const aws = wb.getActiveSheet();
-        for (const r of rowsToProcess) {
-          highlightRow(aws, r);
-        }
+        for (const r of rowsFinal) highlightRow(aws, r);
       } catch (e) {
         console.error('[SheetValueChanged] create/update failed:', e);
       } finally {
-        for (const r of rowsToProcess) {
-          processingRows.delete(key(r));
-        }
+        for (const r of rowsFinal) processingRows.delete(keyFor(r));
       }
     }
   );
-
 
   // ====== Disposer ======
   return () => {
