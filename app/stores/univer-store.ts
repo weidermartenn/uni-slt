@@ -12,6 +12,7 @@ export const useUniverStore = defineStore("univer", {
         batchProgress: true,
         suppressLevel: 0,
         uiReady: false,
+        uiLoading: true,
     }),
 
     actions: {
@@ -42,5 +43,6 @@ export const useUniverStore = defineStore("univer", {
         endQuiet() { this.suppressLevel = Math.max(0, this.suppressLevel - 1) },
         isQuiet() { return this.suppressLevel > 0 || this.batchProgress },
         setUiReady(v: boolean) { this.uiReady = v },
+        setUiLoading(v: boolean) { this.uiLoading = v },
     }
 });

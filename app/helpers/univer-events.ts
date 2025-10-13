@@ -8,7 +8,7 @@ import type { TransportAccounting } from "~/entities/TransportAccountingDto/type
 import { useUniverWorker } from "~/composables/useUniverWorker";
 
 export function registerUniverEvents(univerAPI: FUniver) {
-  const { handleRowChangeOptimized, queueBatchOperation } = useUniverWorker();
+  const { handleRowChangeOptimized } = useUniverWorker();
 
   // ====== Константы/флаги ======
   const dateCols = new Set([0, 4, 11, 12, 19]); // A,E,L,M,T (0-based)
@@ -106,9 +106,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
       setTimeout(() => {
         try {
           range.removeThemeStyle(theme);
-        } catch {}
+        } catch { }
       }, 1000);
-    } catch {}
+    } catch { }
   };
 
   const letterToColumnIndex = (letter: string): number =>
@@ -328,7 +328,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       try {
         univerStore.beginQuiet?.();
-      } catch {}
+      } catch { }
       try {
         // оценим сколько строк сканировать по длине стора
         const storeLen = (sheetStore.records as any)?.[target]?.length ?? 0;
@@ -356,7 +356,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       } finally {
         try {
           univerStore.endQuiet?.();
-        } catch {}
+        } catch { }
       }
     });
   });
@@ -389,7 +389,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (!lockedCells.length) return;
     try {
       univerStore.beginQuiet?.();
-    } catch {}
+    } catch { }
     try {
       for (const { row0, col0 } of lockedCells) {
         const prev = getPrevValueForCell(listName, row0, col0, store);
@@ -398,7 +398,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     } finally {
       try {
         univerStore.endQuiet?.();
-      } catch {}
+      } catch { }
     }
   };
 
@@ -415,7 +415,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (me?.roleCode !== "ROLE_MANAGER") return;
     try {
       univerStore.beginQuiet?.();
-    } catch {}
+    } catch { }
     try {
       for (const col of MANAGER_LOCKED_COLUMNS) {
         if (col === 27) continue;
@@ -424,133 +424,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
     } finally {
       try {
         univerStore.endQuiet?.();
-      } catch {}
+      } catch { }
     }
-  };
-
-  // ====== Единичный подтверждённый ввод ======
-  const handleRowChange = async (row: number, col: number) => {
-    const wb = univerAPI.getActiveWorkbook();
-    if (!wb) return;
-    const aws = wb.getActiveSheet();
-    const s = aws?.getSheet();
-    if (!s || row === 0) return;
-    const listName = s.getName();
-    const sheetStore = useSheetStore();
-    const toast = useToast();
-
-    const me = await getMe();
-    if (
-      me?.roleCode === "ROLE_MANAGER" &&
-      isCellLockedForManager(listName, row, col, sheetStore)
-    ) {
-      revertSingleLockedCell(aws, listName, row, col, sheetStore);
-      return;
-    }
-
-    if (dateCols.has(col)) {
-      const raw = s.getCell(row, col);
-      const n = normalizeDateInput(raw);
-      if (!n) {
-        try {
-          univerStore.beginQuiet?.();
-        } catch {}
-        try {
-          aws.getRange(row, col).setValue({ v: "" });
-        } finally {
-          try {
-            univerStore.endQuiet?.();
-          } catch {}
-        }
-        try {
-          toast.add({
-            title: "Неверный формат даты",
-            color: "error",
-            duration: 2500,
-          });
-        } catch {}
-        return;
-      }
-      const cur = toStr(raw);
-      if (cur !== n) aws.getRange(row, col).setValue({ v: n });
-    }
-
-    if (NUMERIC_COLS.has(col)) {
-      const raw = s.getCell(row, col);
-      const val = toStr(raw);
-      if (!isNumericOrEmpty(val)) {
-        try {
-          univerStore.beginQuiet?.();
-        } catch {}
-        try {
-          aws.getRange(row, col).setValue({ v: "" });
-        } finally {
-          try {
-            univerStore.endQuiet?.();
-          } catch {}
-        }
-        try {
-          useToast().add({
-            title: "Только числа",
-            description: "В этой колонке допускаются только числовые значения",
-            color: "warning",
-            duration: 3000,
-            icon: "i-lucide-alert-triangle",
-          });
-        } catch {}
-        return;
-      }
-    }
-
-    const rowVals = aws.getRange(row, 0, 1, 28).getValues()?.[0] ?? [];
-    const idStr = toStr(rowVals[27]);
-    const key = `${listName}#${row}`;
-
-    let has = false;
-    for (let c = 0; c <= 26; c++)
-      if (toStr(rowVals[c])) {
-        has = true;
-        break;
-      }
-    if (!has && !idStr) return;
-
-    if (!idStr) {
-      if (requestedRows.has(key)) return;
-      requestedRows.add(key);
-      try {
-        let createDto = buildSR(rowVals, listName);
-        if (me?.roleCode === "ROLE_MANAGER") {
-          createDto = createManagerSafeDto(
-            createDto,
-            listName,
-            row,
-            sheetStore
-          );
-        }
-        await sheetStore.addRecords([createDto]);
-        await paintManagerLockedColsOnRow(aws, row);
-        highlightRow(aws, row);
-      } finally {
-        requestedRows.delete(key);
-      }
-      return;
-    }
-
-    const idNum = Number(idStr);
-    if (!Number.isFinite(idNum) || idNum <= 0) return;
-
-    const arr = (sheetStore.records as any)?.[listName] as
-      | TransportAccounting[]
-      | undefined;
-    const prevRec = Array.isArray(arr) ? arr[row - 1] : undefined;
-
-    let dto = { ...buildSR(rowVals, listName, idNum), id: idNum };
-    if (me?.roleCode === "ROLE_MANAGER") {
-      dto = maskDtoForManager(dto, listName, row, sheetStore, prevRec);
-    }
-
-    await sheetStore.updateRecords([dto]);
-    highlightRow(aws, row);
   };
 
   const offEditEnded = univerAPI.addEvent(
@@ -609,8 +484,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
         dateCols.has(c)
           ? normalizeDateInput(v) ?? v
           : NUMERIC_COLS.has(c)
-          ? normalizeNumberStr(v)
-          : v;
+            ? normalizeNumberStr(v)
+            : v;
 
       if (typeof (params as any)?.text === "string") {
         const rows = ((params as any).text as string).split(/\r?\n/);
@@ -619,13 +494,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
             !line
               ? line
               : line
-                  .split("\t")
-                  .map((cell, i) => {
-                    const nv = norm(cell, startCol + i);
-                    if (nv !== cell) changed = true;
-                    return nv;
-                  })
-                  .join("\t")
+                .split("\t")
+                .map((cell, i) => {
+                  const nv = norm(cell, startCol + i);
+                  if (nv !== cell) changed = true;
+                  return nv;
+                })
+                .join("\t")
           )
           .join("\n");
         if (next !== (params as any).text) {
@@ -661,10 +536,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
           data.cells = data.cells.map((row: any[]) =>
             Array.isArray(row)
               ? row.map((cell: any, i: number) => {
-                  const nv = norm(cell, startCol + i);
-                  if (nv !== cell) changed = true;
-                  return nv;
-                })
+                const nv = norm(cell, startCol + i);
+                if (nv !== cell) changed = true;
+                return nv;
+              })
               : row
           );
         }
@@ -673,10 +548,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
         (params as any).cells = (params as any).cells.map((row: any[]) =>
           Array.isArray(row)
             ? row.map((cell: any, i: number) => {
-                const nv = norm(cell, startCol + i);
-                if (nv !== cell) changed = true;
-                return nv;
-              })
+              const nv = norm(cell, startCol + i);
+              if (nv !== cell) changed = true;
+              return nv;
+            })
             : row
         );
       }
@@ -798,11 +673,11 @@ export function registerUniverEvents(univerAPI: FUniver) {
   );
 
   const PASTE_TRIGGERS = new Set([
-    "sheet.command.clipboard-paste",
-    "sheet.command.paste",
-    "sheet.command.paste-values",
-    "sheet.command.paste-formula",
-    "sheet.command.paste-all",
+    'sheet.command.clipboard-paste',
+    'sheet.command.paste',
+    'sheet.command.paste-values',
+    'sheet.command.paste-formula',
+    'sheet.command.paste-all',
   ]);
 
   const offValueChanged = univerAPI.addEvent(
@@ -811,7 +686,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
       if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return;
       if (batchPasteInProgress) return;
 
-      const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? "";
+      const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? '';
+      console.log('[univer-events] value changed trigger:', trigger);
+
+      // 1) Пропускаем явные вставки из буфера обмена
       if (PASTE_TRIGGERS.has(trigger)) return;
 
       const wb = univerAPI.getActiveWorkbook();
@@ -823,38 +701,117 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const subUnitId = params?.subUnitId ?? params?.payload?.params?.subUnitId;
       if (activeSheetId && subUnitId && subUnitId !== activeSheetId) return;
 
+      // 2) Извлекаем изменения
       const cv: Record<string, Record<string, any>> | undefined =
         params?.cellValue ?? params?.payload?.params?.cellValue;
-      if (!cv || typeof cv !== "object") return;
+      if (!cv || typeof cv !== 'object') return;
 
+      // 3) Нормализация AUTO-FILL: копируем seed без инкремента дат/чисел
+      if (trigger === 'sheet.command.auto-fill') {
+        try {
+          const rowKeys = Object.keys(cv);
+          if (rowKeys.length) {
+            const rowIndexes = rowKeys.map(Number).sort((a, b) => a - b);
+
+            // Собираем все колонки, попавшие в изменение
+            const colSet = new Set<number>();
+            for (const r of rowIndexes) {
+              const rowObj = cv[String(r)] || {};
+              for (const ck of Object.keys(rowObj)) {
+                const c = Number(ck);
+                if (Number.isFinite(c)) colSet.add(c);
+              }
+            }
+            const colIndexes = Array.from(colSet).sort((a, b) => a - b);
+
+            const minRow = rowIndexes[0];
+            const maxRow = rowIndexes[rowIndexes.length - 1];
+            const minCol = colIndexes[0];
+            const maxCol = colIndexes[colIndexes.length - 1];
+
+            // Эвристика направления: вертикаль, если строк больше/равно столбцам
+            const isVertical = rowIndexes.length >= colIndexes.length;
+
+            const readSeed = (r: number, c: number) => {
+              try {
+                const v2d = ws.getRange(r, c, 1, 1).getValues();
+                return unwrapV(v2d?.[0]?.[0]);
+              } catch {
+                return undefined;
+              }
+            };
+
+            // seed для каждой колонки
+            const seedsByCol = new Map<number, any>();
+            for (const col of colIndexes) {
+              let seed: any = undefined;
+
+              if (isVertical) {
+                if (minRow - 1 >= 0) seed = readSeed(minRow - 1, col);
+                if (seed === undefined) seed = readSeed(maxRow + 1, col);
+              } else {
+                // Горизонтальный драг
+                if (minCol - 1 >= 0) seed = readSeed(rowIndexes[0], minCol - 1);
+                if (seed === undefined) seed = readSeed(rowIndexes[0], maxCol + 1);
+              }
+
+              // Фоллбэк: берём значение первой изменённой ячейки
+              if (seed === undefined) {
+                seed = unwrapV(cv[String(minRow)]?.[String(col)]?.v);
+              }
+
+              seedsByCol.set(col, seed);
+            }
+
+            // Применяем seed в UI и в cv (чтобы дальше create/update работали с нормализованным значением)
+            try { univerStore.beginQuiet?.(); } catch { }
+            try {
+              for (const r of rowIndexes) {
+                for (const col of colIndexes) {
+                  const seed = seedsByCol.get(col);
+                  ws.getRange(r, col).setValue({ v: seed });
+                  (cv[String(r)] ??= {})[String(col)] = { v: seed };
+                }
+              }
+            } finally {
+              try { univerStore.endQuiet?.(); } catch { }
+            }
+            // Не делаем return — даём пойти дальше по обычной цепочке
+          }
+        } catch (e) {
+          console.warn('[univer-events] auto-fill normalize failed:', e);
+        }
+      }
+
+      // 4) Собираем изменённые ячейки из cv (уже после возможной нормализации)
       const perRowRaw = new Map<number, Set<number>>();
       for (const rk of Object.keys(cv)) {
         const rowObj = cv[rk];
         if (!rowObj) continue;
         for (const ck of Object.keys(rowObj)) {
           const cell = rowObj[ck];
-          if (!cell || !Object.prototype.hasOwnProperty.call(cell, "v"))
-            continue;
-          const row0 = Number(rk),
-            col0 = Number(ck);
+          if (!cell || !Object.prototype.hasOwnProperty.call(cell, 'v')) continue;
+
+          const row0 = Number(rk);
+          const col0 = Number(ck);
           if (!Number.isFinite(row0) || !Number.isFinite(col0)) continue;
           if (row0 <= 0 || col0 === 27) continue;
-          (
-            perRowRaw.get(row0) ?? perRowRaw.set(row0, new Set()).get(row0)!
-          ).add(col0);
+
+          (perRowRaw.get(row0) ?? perRowRaw.set(row0, new Set()).get(row0)!).add(col0);
         }
       }
       if (perRowRaw.size === 0) return;
 
-      const listName = sheet.getName?.() || "";
+      const listName = sheet.getName?.() || '';
       const store = useSheetStore();
       const me = await getMe();
 
+      // 5) Блокировки для менеджера
       let hadLocked = false;
       const lockedCells: Array<{ row0: number; col0: number }> = [];
       const perRowAllowed = new Map<number, Set<number>>();
 
-      if (me?.roleCode === "ROLE_MANAGER") {
+      if (me?.roleCode === 'ROLE_MANAGER') {
         for (const [row0, cols] of perRowRaw) {
           const allowed = new Set<number>();
           for (const col0 of cols) {
@@ -874,125 +831,67 @@ export function registerUniverEvents(univerAPI: FUniver) {
       }
 
       const perRow =
-        me?.roleCode === "ROLE_MANAGER" ? perRowAllowed : perRowRaw;
+        me?.roleCode === 'ROLE_MANAGER' ? perRowAllowed : perRowRaw;
       if (perRow.size === 0) return;
 
+      // 6) Валидация числовых полей
       {
         let invalid = false;
         for (const [row0, cols] of perRow) {
           for (const col0 of cols) {
             if (!NUMERIC_COLS.has(col0)) continue;
-            const vFromPayload = cv[String(row0)]?.[String(col0)]?.v;
-            if (!isNumericOrEmpty(vFromPayload)) {
+            const v = cv[String(row0)]?.[String(col0)]?.v;
+            if (!isNumericOrEmpty(v)) {
               invalid = true;
               break;
             }
           }
           if (invalid) break;
         }
+
         if (invalid) {
-          try {
-            univerStore.beginQuiet?.();
-          } catch {}
+          try { univerStore.beginQuiet?.(); } catch { }
           try {
             for (const [row0, cols] of perRow) {
               for (const col0 of cols) {
                 if (!NUMERIC_COLS.has(col0)) continue;
-                ws.getRange(row0, col0).setValue({ v: "" });
+                ws.getRange(row0, col0).setValue({ v: '' });
               }
             }
           } finally {
-            try {
-              univerStore.endQuiet?.();
-            } catch {}
+            try { univerStore.endQuiet?.(); } catch { }
           }
+
           try {
             useToast().add({
-              title: "Только числа",
-              description:
-                "В числовую колонку внесено текстовое значение или ошибка.",
-              color: "warning",
+              title: 'Только числа',
+              description: 'В числовую колонку внесено текстовое значение или ошибка.',
+              color: 'warning',
+              icon: 'i-lucide-alert-triangle',
               duration: 3000,
-              icon: "i-lucide-alert-triangle",
             });
-          } catch {}
+          } catch { }
+
           return;
         }
       }
 
+      // 7) Определяем реально изменённые строки
       const getOld = (rec: TransportAccounting, col0: number): any => {
-        switch (col0) {
-          case 0:
-            return rec.dateOfPickup;
-          case 1:
-            return rec.numberOfContainer;
-          case 2:
-            return rec.cargo;
-          case 3:
-            return rec.typeOfContainer;
-          case 4:
-            return rec.dateOfSubmission;
-          case 5:
-            return rec.addressOfDelivery;
-          case 6:
-            return rec.ourFirm;
-          case 7:
-            return rec.client;
-          case 8:
-            return rec.formPayAs;
-          case 9:
-            return rec.summa;
-          case 10:
-            return rec.numberOfBill;
-          case 11:
-            return rec.dateOfBill;
-          case 12:
-            return rec.datePayment;
-          case 13:
-            return rec.contractor;
-          case 14:
-            return rec.driver;
-          case 15:
-            return rec.formPayHim;
-          case 16:
-            return rec.contractorRate;
-          case 17:
-            return rec.sumIssued;
-          case 18:
-            return rec.numberOfBillAdd;
-          case 19:
-            return rec.dateOfPaymentContractor;
-          case 20:
-            return rec.manager;
-          case 21:
-            return rec.departmentHead;
-          case 22:
-            return rec.clientLead;
-          case 23:
-            return rec.salesManager;
-          case 24:
-            return rec.additionalExpenses;
-          case 25:
-            return rec.income;
-          case 26:
-            return rec.incomeLearned;
-          default:
-            return "";
-        }
+        const key = COL_TO_KEY[col0] as keyof TransportAccounting;
+        return rec?.[key];
       };
 
       const rowsToProcess: number[] = [];
       for (const [row0, cols] of perRow) {
-        const arr = (store.records as any)?.[listName] as
-          | TransportAccounting[]
-          | undefined;
+        const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined;
         const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined;
 
         if (!prevRec) {
           let nonEmpty = false;
           for (const c of cols) {
             const v = cv[String(row0)]?.[String(c)]?.v;
-            if (String(v ?? "").trim() !== "") {
+            if (String(v ?? '').trim() !== '') {
               nonEmpty = true;
               break;
             }
@@ -1004,9 +903,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         let changed = false;
         for (const c of cols) {
           const nv = cv[String(row0)]?.[String(c)]?.v;
-          if (
-            String(nv ?? "").trim() !== String(getOld(prevRec, c) ?? "").trim()
-          ) {
+          if (String(nv ?? '').trim() !== String(getOld(prevRec, c) ?? '').trim()) {
             changed = true;
             break;
           }
@@ -1015,6 +912,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       }
       if (!rowsToProcess.length) return;
 
+      // 8) Формируем DTO и отправляем в стор
       const key = (r: number) => `${listName}#${r}`;
       for (const r of rowsToProcess) {
         if (processingRows.has(key(r))) return;
@@ -1032,40 +930,25 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
           for (const c of cols) {
             const vFromPayload = cv[String(row0)]?.[String(c)]?.v;
-            if (
-              rowVals[c] &&
-              typeof rowVals[c] === "object" &&
-              "v" in rowVals[c]
-            ) {
-              rowVals[c].v = vFromPayload;
-            } else {
-              rowVals[c] = { v: vFromPayload };
-            }
+            rowVals[c] = { v: vFromPayload };
           }
 
-          const idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? "").trim();
+          const idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim();
           const idNum = Number(idStr);
-          const arr = (store.records as any)?.[listName] as
-            | TransportAccounting[]
-            | undefined;
+          const arr = (store.records as any)?.[listName] as TransportAccounting[] | undefined;
           const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined;
 
           if (Number.isFinite(idNum) && idNum > 0) {
             let dto = { ...buildSR(rowVals, listName, idNum), id: idNum };
-            if (me?.roleCode === "ROLE_MANAGER") {
+            if (me?.roleCode === 'ROLE_MANAGER') {
               dto = maskDtoForManager(dto, listName, row0, store, prevRec);
             }
             updateDtos.push(dto);
           } else {
             if (rowHasData(rowVals)) {
               let createDto = buildSR(rowVals, listName);
-              if (me?.roleCode === "ROLE_MANAGER") {
-                createDto = createManagerSafeDto(
-                  createDto,
-                  listName,
-                  row0,
-                  store
-                );
+              if (me?.roleCode === 'ROLE_MANAGER') {
+                createDto = createManagerSafeDto(createDto, listName, row0, store);
               }
               createDtos.push(createDto);
               createdRows.push(row0);
@@ -1073,39 +956,44 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
         }
 
-        if (!createDtos.length && !updateDtos.length) return;
-
         if (createDtos.length) await store.addRecords(createDtos);
         if (updateDtos.length) await store.updateRecords(updateDtos);
 
-        for (const r of createdRows) await paintManagerLockedColsOnRow(ws, r);
+        for (const r of createdRows) {
+          await paintManagerLockedColsOnRow(ws, r);
+        }
 
         const aws = wb.getActiveSheet();
-        for (const r of rowsToProcess) highlightRow(aws, r);
+        for (const r of rowsToProcess) {
+          highlightRow(aws, r);
+        }
       } catch (e) {
-        console.error("[SheetValueChanged] create/update failed:", e);
+        console.error('[SheetValueChanged] create/update failed:', e);
       } finally {
-        for (const r of rowsToProcess) processingRows.delete(key(r));
+        for (const r of rowsToProcess) {
+          processingRows.delete(key(r));
+        }
       }
     }
   );
+
 
   // ====== Disposer ======
   return () => {
     try {
       (offEditEnded as any)?.dispose?.();
-    } catch {}
+    } catch { }
     try {
       (offBeforePaste as any)?.dispose?.();
-    } catch {}
+    } catch { }
     try {
       (offPasted as any)?.dispose?.();
-    } catch {}
+    } catch { }
     try {
       (offValueChanged as any)?.dispose?.();
-    } catch {}
+    } catch { }
     try {
       offAction?.();
-    } catch {} // <— отписка от сокета
+    } catch { } // <— отписка от сокета
   };
 }
