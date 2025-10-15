@@ -1,9 +1,8 @@
-// useUniverWorker.ts
 import { useSheetStore } from '~/stores/sheet-store-optimized'
 
 export function useUniverWorker() {
+  console.log('🔄 [useUniverWorker] инициализация');
   const sheetStore = useSheetStore()
-
   const batchQueue = ref<Array<{
     type: 'create' | 'update'
     data: any
@@ -16,15 +15,21 @@ export function useUniverWorker() {
   const BATCH_DELAY = 300
   const MAX_BATCH_SIZE = 20
 
-  // 🔁 Новый метод: проверка, изменились ли данные по сравнению с текущими
   const isDtoChanged = (existing: any, incoming: any): boolean => {
-    if (!existing) return true
+    if (!existing) {
+      console.log('🔍 [useUniverWorker.isDtoChanged] существующей записи нет - данные изменены');
+      return true;
+    }
     for (const key of Object.keys(incoming)) {
       const newVal = String(incoming[key] ?? '').trim()
       const oldVal = String(existing[key] ?? '').trim()
-      if (newVal !== oldVal) return true
+      if (newVal !== oldVal) {
+        console.log(`🔍 [useUniverWorker.isDtoChanged] изменение в поле "${key}": "${oldVal}" -> "${newVal}"`);
+        return true;
+      }
     }
-    return false
+    console.log('🔍 [useUniverWorker.isDtoChanged] данные не изменились');
+    return false;
   }
 
   const queueBatchOperation = (
@@ -33,12 +38,8 @@ export function useUniverWorker() {
     row: number,
     listName: string
   ) => {
-    // 🧠 Проверка на дубликат с текущими данными
-    if (type === 'update') {
-      const current = sheetStore.records[listName]?.find(r => r.id === data.id)
-      if (!isDtoChanged(current, data)) return // ❌ не изменилось — не добавляем
-    }
-
+    console.log('📥 [useUniverWorker.queueBatchOperation] добавление в очередь:', { type, row, listName, data });
+    
     const last = batchQueue.value.at(-1)
     if (
       last &&
@@ -47,7 +48,8 @@ export function useUniverWorker() {
       last.listName === listName &&
       JSON.stringify(last.data) === JSON.stringify(data)
     ) {
-      return // 🔁 дубликат — не добавляем
+      console.log('🔁 [useUniverWorker.queueBatchOperation] дубликат операции - пропускаем');
+      return;
     }
 
     batchQueue.value.push({
@@ -58,24 +60,38 @@ export function useUniverWorker() {
       timestamp: Date.now()
     })
 
-    if (batchTimeout.value) clearTimeout(batchTimeout.value)
+    console.log(`📊 [useUniverWorker.queueBatchOperation] размер очереди: ${batchQueue.value.length}`);
 
-    if (batchQueue.value.length >= MAX_BATCH_SIZE) {
-      processBatch()
-      return
+    if (batchTimeout.value) {
+      console.log('⏰ [useUniverWorker.queueBatchOperation] очистка предыдущего таймера');
+      clearTimeout(batchTimeout.value);
     }
 
+    if (batchQueue.value.length >= MAX_BATCH_SIZE) {
+      console.log('🚀 [useUniverWorker.queueBatchOperation] достигнут максимальный размер - немедленная обработка');
+      processBatch();
+      return;
+    }
+
+    console.log(`⏳ [useUniverWorker.queueBatchOperation] установка таймера на ${BATCH_DELAY}ms`);
     batchTimeout.value = setTimeout(() => {
-      processBatch()
+      console.log('⏰ [useUniverWorker.queueBatchOperation] таймер сработал - обработка батча');
+      processBatch();
     }, BATCH_DELAY)
   }
 
   const processBatch = async () => {
-    if (batchQueue.value.length === 0) return
+    console.log('🔄 [useUniverWorker.processBatch] начало обработки батча');
+    if (batchQueue.value.length === 0) {
+      console.log('ℹ️ [useUniverWorker.processBatch] очередь пуста');
+      return;
+    }
 
-    const currentBatch = [...batchQueue.value]
-    batchQueue.value = []
-    batchTimeout.value = null
+    const currentBatch = [...batchQueue.value];
+    batchQueue.value = [];
+    batchTimeout.value = null;
+    
+    console.log(`📦 [useUniverWorker.processBatch] обработка ${currentBatch.length} операций`);
 
     const grouped = currentBatch.reduce((acc, op) => {
       const key = `${op.listName}_${op.type}`
@@ -84,51 +100,53 @@ export function useUniverWorker() {
       return acc
     }, {} as Record<string, typeof currentBatch>)
 
+    console.log('📊 [useUniverWorker.processBatch] сгруппированные операции:', Object.keys(grouped));
+
     try {
       for (const [key, ops] of Object.entries(grouped)) {
         const [listName, type] = key.split('_') as [string, 'create' | 'update']
+        console.log(`🔄 [useUniverWorker.processBatch] обработка группы: ${key}, количество: ${ops.length}`);
 
         if (type === 'create') {
-          const createDtos = ops.map(op => op.data)
-          await sheetStore.addRecords(createDtos)
+          console.log('➕ [useUniverWorker.processBatch] CREATE операции');
+          const createDtos = ops.map(op => op.data);
+          console.log('📝 [useUniverWorker.processBatch] CREATE DTOs:', createDtos);
+          // ЗАКОММЕНТИРОВАНО: await sheetStore.addRecords(createDtos)
+          console.log('✅ [useUniverWorker.processBatch] CREATE выполнено (закомментировано)');
         }
 
         if (type === 'update') {
-          // 🧠 Убираем дубликаты и неизменившиеся DTO
-          const uniqueMap = new Map<number, any>()
+          console.log('✏️ [useUniverWorker.processBatch] UPDATE операции');
+          const uniqueMap = new Map<number, any>();
           for (const op of ops) {
-            const id = Number(op.data?.id)
-            if (!Number.isFinite(id)) continue
-            const current = sheetStore.records[op.listName]?.find(r => r.id === id)
+            const id = Number(op.data?.id);
+            if (!Number.isFinite(id)) {
+              console.warn('⚠️ [useUniverWorker.processBatch] UPDATE: некорректный ID:', op.data?.id);
+              continue;
+            }
+            const current = sheetStore.records[op.listName]?.find(r => r.id === id);
             if (isDtoChanged(current, op.data)) {
-              uniqueMap.set(id, op.data)
+              console.log(`🔄 [useUniverWorker.processBatch] UPDATE: данные изменились для ID ${id}`);
+              uniqueMap.set(id, op.data);
+            } else {
+              console.log(`🔁 [useUniverWorker.processBatch] UPDATE: данные не изменились для ID ${id}`);
             }
           }
-          const finalUpdates = Array.from(uniqueMap.values())
+          const finalUpdates = Array.from(uniqueMap.values());
+          console.log(`📝 [useUniverWorker.processBatch] финальные UPDATEs: ${finalUpdates.length}`);
           if (finalUpdates.length > 0) {
-            await sheetStore.updateRecords(finalUpdates)
+            // ЗАКОММЕНТИРОВАНО: await sheetStore.updateRecords(finalUpdates)
+            console.log('✅ [useUniverWorker.processBatch] UPDATE выполнено (закомментировано)');
+          } else {
+            console.log('ℹ️ [useUniverWorker.processBatch] нет изменений для UPDATE');
           }
         }
       }
     } catch (e) {
-      console.error('[UniverWorker] Ошибка обработки батча:', e)
+      console.error('❌ [useUniverWorker.processBatch] ошибка обработки батча:', e);
+    } finally {
+      console.log('✅ [useUniverWorker.processBatch] обработка батча завершена');
     }
-  }
-
-  const highlightRow = (row: number) => {
-    try {
-      const univerAPI = (window as any).univerAPI
-      const wb = univerAPI?.getActiveWorkbook()
-      const aws = wb?.getActiveSheet()
-      const range = aws?.getRange(row, 0, 1, 28)
-      range?.useThemeStyle?.('light-green')
-      const theme = range?.getUsedThemeStyle?.()
-      setTimeout(() => {
-        try {
-          range?.removeThemeStyle?.(theme)
-        } catch {}
-      }, 1000)
-    } catch {}
   }
 
   const handleRowChangeOptimized = async (
@@ -137,44 +155,40 @@ export function useUniverWorker() {
     rowVals: any[],
     listName: string,
     idStr: string,
-    buildSR: (rowVals: any[], listName: string, id?: number) => any,
-    maskDtoForManager?: (
-      dto: any,
-      listName: string,
-      row: number,
-      store: any,
-      prevRec?: any
-    ) => any
+    buildSR: (rowVals: any[], listName: string, id?: number) => any
   ) => {
+    console.log('🔄 [useUniverWorker.handleRowChangeOptimized] обработка изменения строки:', {
+      row, col, listName, idStr, rowVals
+    });
+
     if (!idStr) {
-      const createDto = buildSR(rowVals, listName)
-      queueBatchOperation('create', createDto, row, listName)
-      try {
-        sheetStore.anchorCreateRow(listName, row)
-      } catch {}
+      console.log('➕ [useUniverWorker.handleRowChangeOptimized] CREATE новая запись');
+      const createDto = buildSR(rowVals, listName);
+      console.log('📝 [useUniverWorker.handleRowChangeOptimized] CREATE DTO:', createDto);
+      queueBatchOperation('create', createDto, row, listName);
     } else {
-      const idNum = Number(idStr)
+      const idNum = Number(idStr);
       if (Number.isFinite(idNum) && idNum > 0) {
-        let updateDto = { ...buildSR(rowVals, listName, idNum), id: idNum }
-
-        if (maskDtoForManager) {
-          const arr = sheetStore.records?.[listName]
-          const prevRec = Array.isArray(arr) ? arr[row - 1] : undefined
-          updateDto = maskDtoForManager(updateDto, listName, row, sheetStore, prevRec)
-        }
-
-        queueBatchOperation('update', updateDto, row, listName)
+        console.log(`✏️ [useUniverWorker.handleRowChangeOptimized] UPDATE существующей записи ID: ${idNum}`);
+        let updateDto = { ...buildSR(rowVals, listName, idNum), id: idNum };
+        console.log('📝 [useUniverWorker.handleRowChangeOptimized] UPDATE DTO:', updateDto);
+        queueBatchOperation('update', updateDto, row, listName);
+      } else {
+        console.warn('⚠️ [useUniverWorker.handleRowChangeOptimized] некорректный ID:', idStr);
       }
     }
   }
 
   const cleanup = () => {
+    console.log('🧹 [useUniverWorker.cleanup] очистка');
     if (batchTimeout.value) {
-      clearTimeout(batchTimeout.value)
-      batchTimeout.value = null
+      console.log('⏰ [useUniverWorker.cleanup] очистка таймера');
+      clearTimeout(batchTimeout.value);
+      batchTimeout.value = null;
     }
     if (batchQueue.value.length > 0) {
-      processBatch()
+      console.log(`📦 [useUniverWorker.cleanup] принудительная обработка ${batchQueue.value.length} операций`);
+      processBatch();
     }
   }
 
