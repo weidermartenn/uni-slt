@@ -214,6 +214,7 @@ export const useSheetStore = defineStore("sheet", {
         if (!created || !created.length) return
 
         const arr = this.records[targetList] || (this.records[targetList] = [])
+
         for (const rec of created) {
           const id = Number((rec as any)?.id)
           if (!Number.isFinite(id)) continue
@@ -233,6 +234,11 @@ export const useSheetStore = defineStore("sheet", {
           (msg as any).transportAccountingDTO?.[0]
 
         if (!upd) return
+
+        const existing = this.records[targetList]?.find(r => r.id === upd.id)
+        const isSame = JSON.stringify(existing) === JSON.stringify(upd)
+
+        if (isSame) return
 
         if (!targetList && (upd as any)?.id) {
           targetList = Object.keys(this.records).find((k) =>
