@@ -18,22 +18,46 @@
                   <UIcon name="i-lucide-user" class="h-8 w-8" />
                 </div>
                 <div class="v-col">
-                  <h1 class="text-2xl font-bold text-gray-900 tracking-tight">{{ displayName(userData.object) }}</h1>
-                  <div class="flex items-center gap-3 mt-2">
-                    <UBadge variant="subtle" class="font-medium">
-                      {{ userData.object.role?.name || '-' }}
-                    </UBadge>
-                    <span class="text-sm text-gray-500 flex items-center gap-1">
-                      @{{ userData.object.login }}
-                      <UButton
-                        color="info"
-                        variant="ghost"
-                        icon="i-lucide-copy"
-                        size="xs"
-                        class="p-1"
-                        @click="copyToClipboard(userData.object.login, 'Логин скопирован')"
-                      />
-                    </span>
+                  <!-- ФИО редактируемое -->
+                  <div class="flex flex-col">
+                    <div v-if="!editMode" class="text-2xl font-bold text-gray-900 tracking-tight">
+                      {{ displayName(userData.object) }}
+                    </div>
+                    <UInput
+                      v-else
+                      v-model="form.fullName"
+                      variant="none"
+                      class="text-2xl font-bold p-0"
+                      placeholder="ФИО"
+                      aria-label="ФИО"
+                    />
+                    <div class="flex items-center gap-3 mt-2">
+                      <UBadge variant="subtle" class="font-medium">
+                        {{ userData.object.role?.name || '-' }}
+                      </UBadge>
+
+                      <!-- Редактируемая роль -->
+                      <div v-if="editMode">
+                        <USelect
+                          v-model="form.roleCode"
+                          :items="roleItems"
+                          placeholder="Выберите роль"
+                          class="min-w-[180px]"
+                        />
+                      </div>
+
+                      <span v-else class="text-sm text-gray-500 flex items-center gap-1">
+                        @{{ userData.object.login }}
+                        <UButton
+                          color="info"
+                          variant="ghost"
+                          icon="i-lucide-copy"
+                          size="xs"
+                          class="p-1"
+                          @click="copyToClipboard(userData.object.login, 'Логин скопирован')"
+                        />
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -112,12 +136,12 @@
             </div>
 
             <div class="mt-4 flex justify-end gap-3">
-              <UButton v-if="editMode" color="secondary" variant="ghost" @click="cancelEdit">Отмена</UButton>
-              <UButton v-if="editMode" color="success" @click="save">Сохранить</UButton>
+              <UButton v-if="editMode" color="secondary" variant="ghost" @click="cancelEdit" :disabled="saving">Отмена</UButton>
+              <UButton v-if="editMode" color="success" @click="save" :loading="saving">Сохранить</UButton>
             </div>
           </UCard>
 
-          <!-- Финансовый блок и остальная часть можно копировать из UserLK — здесь прямая интеграция -->
+          <!-- Финансовые параметры (редактируемые) -->
           <UCard class="mt-4 border border-gray-200 shadow-sm hover:shadow-md">
             <template #header>
               <h3 class="font-semibold text-gray-900 flex items-center gap-2">
@@ -127,36 +151,89 @@
             </template>
 
             <div class="v-col gap-3 p-4">
+              <!-- Коэффициенты -->
               <div class="flex flex-col gap-1">
                 <p class="text-xs text-gray-500 uppercase tracking-wide mb-2">Коэффициенты</p>
-                <div class="flex flex-wrap gap-2 items-center">
-                  <span class="text-sm font-semibold text-blue-700 bg-blue-100 px-2 py-1 rounded inline-flex items-center gap-1">
-                    Лид: {{ userData.object.employee?.coefficientClientLead || 0 }}%
-                  </span>
-                  <span class="text-sm font-semibold text-green-700 bg-green-100 px-2 py-1 rounded inline-flex items-center gap-1">
-                    Отдел: {{ userData.object.employee?.coefficientDepartmentHead || 0 }}%
-                  </span>
-                  <span class="text-sm font-semibold text-amber-700 bg-amber-100 px-2 py-1 rounded inline-flex items-center gap-1">
-                    Менеджер: {{ userData.object.employee?.coefficientManager || 0 }}%
-                  </span>
-                  <span class="text-sm font-semibold text-purple-700 bg-purple-100 px-2 py-1 rounded inline-flex items-center gap-1">
-                    Продажи: {{ userData.object.employee?.coefficientSalesManager || 0 }}%
-                  </span>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <UInput
+                    v-model.number="form.employee.coefficientClientLead"
+                    :disabled="!editMode"
+                    variant="none"
+                    type="number"
+                    placeholder="Лид %"
+                  />
+                  <UInput
+                    v-model.number="form.employee.coefficientDepartmentHead"
+                    :disabled="!editMode"
+                    variant="none"
+                    type="number"
+                    placeholder="Отдел %"
+                  />
+                  <UInput
+                    v-model.number="form.employee.coefficientManager"
+                    :disabled="!editMode"
+                    variant="none"
+                    type="number"
+                    placeholder="Менеджер %"
+                  />
+                  <UInput
+                    v-model.number="form.employee.coefficientSalesManager"
+                    :disabled="!editMode"
+                    variant="none"
+                    type="number"
+                    placeholder="Продажи %"
+                  />
                 </div>
               </div>
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-                <div class="p-4 border border-gray-100 rounded-lg bg-green-50">
+                <div>
                   <p class="text-xs text-gray-500 uppercase tracking-wide">Оклад</p>
-                  <p class="text-lg font-bold text-gray-900 mt-1">
-                    {{ formatCurrency(userData.object.employee?.salary || 0) }} руб.
-                  </p>
+                  <UInput
+                    v-model.number="form.employee.salary"
+                    :disabled="!editMode"
+                    variant="none"
+                    type="number"
+                    placeholder="Оклад"
+                    class="mt-1"
+                  />
                 </div>
-                <div class="p-4 border border-gray-100 rounded-lg bg-blue-50">
+                <div>
                   <p class="text-xs text-gray-500 uppercase tracking-wide">Другие выплаты</p>
-                  <p class="text-lg font-bold text-gray-900 mt-1">
-                    {{ formatCurrency(userData.object.employee?.otherPayments || 0) }} руб.
-                  </p>
+                  <UInput
+                    v-model.number="form.employee.otherPayments"
+                    :disabled="!editMode"
+                    variant="none"
+                    type="number"
+                    placeholder="Другие выплаты"
+                    class="mt-1"
+                  />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                <div>
+                  <p class="text-xs text-gray-500 uppercase tracking-wide">Отдел</p>
+                  <UInput
+                    v-model="form.employee.department"
+                    :disabled="!editMode"
+                    variant="none"
+                    type="text"
+                    placeholder="Отдел"
+                    class="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <p class="text-xs text-gray-500 uppercase tracking-wide">Примечание (employee)</p>
+                  <UInput
+                    v-model="form.employee.note"
+                    :disabled="!editMode"
+                    variant="none"
+                    type="text"
+                    placeholder="Примечание"
+                    class="mt-1"
+                  />
                 </div>
               </div>
             </div>
@@ -181,8 +258,6 @@ import { useToast } from '#imports'
 import { nextTick } from 'vue'
 import { getUser } from '~/helpers/getUser'
 
-const { public: kingsApiBase } = useRuntimeConfig()
-
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
@@ -192,14 +267,38 @@ definePageMeta({ layout: 'default' })
 useHead({ title: 'Информация о сотруднике' })
 
 const loading = ref(true)
+const saving = ref(false)
 const userData = ref<any>(null)
 const editMode = ref(false)
 
+// форма расширена
 const form = reactive({
+  fullName: '',
   phone: '',
   email: '',
   note: '',
+  roleCode: null as string | null,
+  employee: {
+    birthdayDate: null as string | null,
+    coefficientClientLead: 0,
+    coefficientDepartmentHead: 0,
+    coefficientManager: 0,
+    coefficientSalesManager: 0,
+    department: '',
+    fixedPart: 0,
+    id: 0,
+    note: '',
+    otherPayments: 0,
+    salary: 0,
+  },
 })
+
+// role items для USelect
+const roleItems = [
+  { label: 'Менеджер', value: 'ROLE_MANAGER' },
+  { label: 'Бухгалтер', value: 'ROLE_BUH' },
+  { label: 'Администратор', value: 'ROLE_ADMIN' },
+]
 
 // Получаем id из params
 const idParam = route.params.id
@@ -228,7 +327,6 @@ const copyToClipboard = async (text: string, successMessage = 'Скопиров�
   }
 }
 
-// Копирование номера телефона (копирует "сырое" значение, если есть, иначе исходное из userData)
 const copyPhone = () => {
   const raw = form.phone || userData.value?.object?.phone || ''
   if (!raw) return
@@ -252,10 +350,29 @@ const loadLKData = async () => {
     loading.value = true
     await employeeStore.fetchForLKById(id)
     userData.value = employeeStore.listForLKById
-    // Инициализируем форму
-    form.phone = userData.value?.object?.phone ?? ''
-    form.email = userData.value?.object?.email ?? ''
-    form.note = userData.value?.object?.employee?.note ?? ''
+
+    // Инициализируем форму из загруженных данных
+    const obj = userData.value?.object || {}
+    form.fullName = obj.fullName ?? obj.name ?? ''
+    form.phone = obj.phone ?? ''
+    form.email = obj.email ?? ''
+    form.note = obj.employee?.note ?? ''
+    form.roleCode = obj.role?.code ?? null
+
+    // employee object — аккуратно заполняем числовые поля
+    form.employee = {
+      birthdayDate: obj.employee?.birthdayDate ?? null,
+      coefficientClientLead: Number(obj.employee?.coefficientClientLead ?? 0),
+      coefficientDepartmentHead: Number(obj.employee?.coefficientDepartmentHead ?? 0),
+      coefficientManager: Number(obj.employee?.coefficientManager ?? 0),
+      coefficientSalesManager: Number(obj.employee?.coefficientSalesManager ?? 0),
+      department: obj.employee?.department ?? '',
+      fixedPart: Number(obj.employee?.fixedPart ?? 0),
+      id: Number(obj.employee?.id ?? 0),
+      note: obj.employee?.note ?? '',
+      otherPayments: Number(obj.employee?.otherPayments ?? 0),
+      salary: Number(obj.employee?.salary ?? 0),
+    }
   } catch (e) {
     console.error(e)
     toast.add({ title: 'Ошибка загрузки', color: 'error' })
@@ -272,50 +389,90 @@ const toggleEdit = () => {
   editMode.value = !editMode.value
   if (!editMode.value) {
     // отмена — сбросить форму в значения из userData
-    form.phone = userData.value?.object?.phone ?? ''
-    form.email = userData.value?.object?.email ?? ''
-    form.note = userData.value?.object?.employee?.note ?? ''
+    resetFormFromUserData()
   }
 }
 
 const cancelEdit = () => {
   editMode.value = false
-  form.phone = userData.value?.object?.phone ?? ''
-  form.email = userData.value?.object?.email ?? ''
-  form.note = userData.value?.object?.employee?.note ?? ''
+  resetFormFromUserData()
 }
 
-// Сохранение — предполагаем существование API PUT /user/:id
+function resetFormFromUserData() {
+  const obj = userData.value?.object || {}
+  form.fullName = obj.fullName ?? obj.name ?? ''
+  form.phone = obj.phone ?? ''
+  form.email = obj.email ?? ''
+  form.note = obj.employee?.note ?? ''
+  form.roleCode = obj.role?.code ?? null
+  form.employee = {
+    birthdayDate: obj.employee?.birthdayDate ?? null,
+    coefficientClientLead: Number(obj.employee?.coefficientClientLead ?? 0),
+    coefficientDepartmentHead: Number(obj.employee?.coefficientDepartmentHead ?? 0),
+    coefficientManager: Number(obj.employee?.coefficientManager ?? 0),
+    coefficientSalesManager: Number(obj.employee?.coefficientSalesManager ?? 0),
+    department: obj.employee?.department ?? '',
+    fixedPart: Number(obj.employee?.fixedPart ?? 0),
+    id: Number(obj.employee?.id ?? 0),
+    note: obj.employee?.note ?? '',
+    otherPayments: Number(obj.employee?.otherPayments ?? 0),
+    salary: Number(obj.employee?.salary ?? 0),
+  }
+}
+
+// Сохранение — формируем полный DTO и отправляем в store
 const save = async () => {
+  if (!userData.value?.object) return
+
+  saving.value = true
   try {
-    loading.value = true
-    // Соберём payload. Подгоняй поля по API.
+    // Формируем DTO в соответствии со swagger'ом / UserDto
+    const existing = userData.value.object
+
     const payload = {
+      id: existing.id,
+      fullName: form.fullName || existing.fullName || existing.name || null,
+      login: existing.login ?? null,
+      name: existing.name ?? null,
       phone: form.phone || null,
       email: form.email || null,
+      chatId: existing.chatId ?? 0,
+      confirmed: typeof existing.confirmed === 'boolean' ? existing.confirmed : true,
+      confirmedNotification: typeof existing.confirmedNotification === 'boolean' ? existing.confirmedNotification : true,
       employee: {
-        ...userData.value.object.employee,
-        note: form.note ?? ''
-      }
+        // передаём обновлённые значения (числа)
+        id: Number(form.employee.id ?? existing.employee?.id ?? 0),
+        birthdayDate: form.employee.birthdayDate ?? existing.employee?.birthdayDate ?? null,
+        coefficientClientLead: Number(form.employee.coefficientClientLead ?? 0),
+        coefficientDepartmentHead: Number(form.employee.coefficientDepartmentHead ?? 0),
+        coefficientManager: Number(form.employee.coefficientManager ?? 0),
+        coefficientSalesManager: Number(form.employee.coefficientSalesManager ?? 0),
+        department: form.employee.department ?? existing.employee?.department ?? '',
+        fixedPart: Number(form.employee.fixedPart ?? existing.employee?.fixedPart ?? 0),
+        note: form.employee.note ?? existing.employee?.note ?? '',
+        otherPayments: Number(form.employee.otherPayments ?? 0),
+        salary: Number(form.employee.salary ?? 0),
+      },
+      role: form.roleCode ? { code: form.roleCode } : (existing.role ?? null),
     }
 
-    // PUT запрос
-    await $fetch(`${kingsApiBase}/user/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: payload,
-    })
+    // Ждём выполнения запроса на сервер (store должен корректно отправлять DTO)
+    await employeeStore.editEmployeeInfo(payload)
 
     toast.add({ title: 'Данные сохранены', color: 'success', icon: 'i-lucide-check' })
 
-    // Обновляем локально — перезагрузим
+    // Обновляем данные текущей страницы и глобальный список сотрудников
     await loadLKData()
+    if (typeof employeeStore.fetchAllEmployeeInfos === 'function') {
+      try { await employeeStore.fetchAllEmployeeInfos() } catch {}
+    }
+
     editMode.value = false
   } catch (err) {
     console.error('save error', err)
     toast.add({ title: 'Ошибка при сохранении', color: 'error', icon: 'i-lucide-x' })
   } finally {
-    loading.value = false
+    saving.value = false
   }
 }
 </script>
