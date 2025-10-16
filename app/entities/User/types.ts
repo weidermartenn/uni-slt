@@ -1,3 +1,4 @@
+import type { Driver } from "../Driver/types";
 import type { Employee } from "../Employee/types";
 
 export interface User {
@@ -6,7 +7,7 @@ export interface User {
     confirmToken: string;
     confirmed: boolean;
     confirmedNotification: boolean;
-    driver: {};
+    driver: Driver;
     employee: Employee;
     errorConfirm: boolean;
     fullName: string;

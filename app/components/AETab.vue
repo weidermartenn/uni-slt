@@ -31,6 +31,10 @@
       </div>
     </div>
 
+    <div class="w-full flex justify-end">
+      <AddEmployeeModal />
+    </div>
+
     <!-- Скелетоны -->
     <div v-if="loading" class="flex flex-col gap-4">
       <UCard v-for="i in 4" :key="i" class="border border-gray-200 animate-pulse">
@@ -94,9 +98,24 @@
               </div>
             </div>
 
-            <UBadge :color="u.confirmed ? 'success' : 'error'" variant="subtle" class="ml-2">
-              {{ u.confirmed ? 'Подтвержден' : 'Не подтвержден' }}
-            </UBadge>
+            <div class="v-row gap-2">
+              <UBadge :color="u.confirmed ? 'success' : 'error'" variant="subtle" class="ml-2">
+                {{ u.confirmed ? 'Подтвержден' : 'Не подтвержден' }}
+              </UBadge>
+
+              <!-- Кнопка удаления: открывает общую модалку -->
+              <UButton
+                variant="soft"
+                color="error"
+                size="sm"
+                icon="i-lucide-trash"
+                class="ml-2"
+                @click.stop.prevent="openDeleteModal(u)"
+                aria-label="Удалить сотрудника"
+              >
+                Удалить
+              </UButton>
+            </div>
           </div>
 
           <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -181,6 +200,21 @@
         </UCard>
       </div>
     </div>
+
+    <!-- Модал подтверждения удаления -->
+    <UModal
+      v-model:open="isDeleteModalOpen"
+      title="Подтвердите удаление"
+      :description="deleteTarget ? `Удалить сотрудника ${displayName(deleteTarget)}? Это действие необратимо.` : ''"
+      :closable="!deleting"
+    >
+      <template #footer>
+        <div class="flex justify-end gap-3 w-full">
+          <UButton variant="ghost" color="secondary" @click="cancelDelete" :disabled="deleting">Отмена</UButton>
+          <UButton color="error" :loading="deleting" @click="confirmDelete">Удалить</UButton>
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>
 
@@ -205,6 +239,11 @@ const q = ref('')
 const roleFilter = ref<string | null>(null)
 const statusFilter = ref<string | null>(null)
 const listContainer = ref<HTMLElement | null>(null)
+
+// Удаление
+const isDeleteModalOpen = ref(false)
+const deleteTarget = ref<User | null>(null)
+const deleting = ref(false)
 
 // Данные из стора
 const employees = computed<User[]>(() =>
@@ -259,7 +298,10 @@ const gotoEmployee = (id: number | string | undefined) => {
 }
 
 // Утилиты
-const displayName = (u: Partial<User>) => u.fullName || (u as any).name || `#${u.id}`
+const displayName = (u: Partial<User> | null) => {
+  if (!u) return ''
+  return u.fullName || (u as any).name || `#${u.id}`
+}
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
@@ -315,6 +357,7 @@ onMounted(async () => {
 })
 
 watch(filteredEmployees, () => {
+  // анимируем при изменении видимого списка
   animateCards()
 })
 
@@ -334,6 +377,44 @@ const load = async () => {
     })
   } finally {
     loading.value = false
+  }
+}
+
+// Открыть модалку удаления
+const openDeleteModal = (user: User) => {
+  deleteTarget.value = user
+  isDeleteModalOpen.value = true
+}
+
+// Отмена
+const cancelDelete = () => {
+  if (deleting.value) return
+  isDeleteModalOpen.value = false
+  deleteTarget.value = null
+}
+
+// Подтвердить удаление
+const confirmDelete = async () => {
+  if (!deleteTarget.value) return
+  const id = deleteTarget.value.id
+  deleting.value = true
+  try {
+    await aeiStore.deleteEmployee(id)
+    toast.add({ title: 'Сотрудник удалён', color: 'success', icon: 'i-lucide-check' })
+    // закрываем модалку
+    isDeleteModalOpen.value = false
+    deleteTarget.value = null
+
+    // Обновим локальные данные — load перезапишет store при необходимости
+    // если store уже обновляет employeesAllInfo, можно не вызывать снова, но вызов небольшого обновления безопасен
+    await load()
+    // анимируем обновлённый список
+    animateCards()
+  } catch (err) {
+    console.error('deleteEmployee error', err)
+    toast.add({ title: 'Ошибка при удалении', color: 'error', icon: 'i-lucide-x' })
+  } finally {
+    deleting.value = false
   }
 }
 </script>

@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { getUser } from "~/helpers/getUser";
 import type { User } from "~/entities/User/types";
+import type { UserDto } from "~/entities/UserDto/types";
 
 const { public: { kingsApiBase } } = useRuntimeConfig();
 function authHeaders(extra?: HeadersInit): HeadersInit {
@@ -53,6 +54,26 @@ export const useEmployeeStore = defineStore("employee", {
     async fetchForLKById(id: number) {
       const data = await $fetch(`${kingsApiBase}/user/${id}`, { method: 'GET', headers: authHeaders() })
       this.listForLKById = data
+    },
+
+    async addEmployee(dto: User) {
+      try {
+        await $fetch(`${kingsApiBase}/admin/employees`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: dto
+        })
+
+        if (typeof this.fetchAllEmployeeInfos === 'function') {
+          await this.fetchAllEmployeeInfos()
+        }
+      } catch (e) {
+        throw e
+      }
+    },
+
+    async editEmployeeInfo(dto: UserDto) {
+      await $fetch(`${kingsApiBase}/admin/employees`, { method: "PATCH", headers: authHeaders(), body: dto });
     }
   }
 });
