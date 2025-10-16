@@ -22,6 +22,7 @@ import { addConditionalFormatting } from '~/helpers/conditionalFormatting';
 import type { FWorksheet } from '@univerjs/preset-sheets-core';
 import { getUser } from '~/helpers/getUser';
 import { useUniverStore } from '~/stores/univer-store';
+import { nextTick } from 'vue';
 
 const tr = ref<number>(0);
 
@@ -114,8 +115,10 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
 
   // ---------- helpers ----------
   const lettersToIndex = (s: string): number => {
+    if (!s) return -1;
+    const up = String(s).toUpperCase();
     let n = 0;
-    for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+    for (let i = 0; i < up.length; i++) n = n * 26 + (up.charCodeAt(i) - 64);
     return n - 1;
   };
 
@@ -156,38 +159,77 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   // --- ВСЕГДА заблокированные колонки для менеджера (E,K,L,M,R,T,Z,AA,AB) ---
   const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27]);
 
-  const applyRowStyles = (sheet: any, item: any, rowIndex: number) => {
-    const isManager = me?.roleCode === 'ROLE_MANAGER';
-    const isAdminOrBuh = me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH';
-
-    const blocked = new Set<number>();
-    if (isManager && Array.isArray(item?.managerBlockListCell)) {
-      for (const rng of item.managerBlockListCell) {
-        if (!Array.isArray(rng)) continue;
-        if (rng.length === 1 && rng[0]) blocked.add(lettersToIndex(rng[0]));
-        else if (rng.length >= 2 && rng[0] && rng[1]) {
-          const a = lettersToIndex(rng[0]); const b = lettersToIndex(rng[1]);
-          for (let c = a; c <= b; c++) blocked.add(c);
+  /**
+   * renderRow:
+   * собирает строку через buildRowCells(item, me) и делает единый setValues для всей строки.
+   * Это гарантирует, что значение и стиль применятся одновременно (без множественных setValue по одной ячейке).
+   */
+  const renderRow = async (sheet: any, item: TransportAccounting, rowIndex: number) => {
+    try {
+      const rowCells = await buildRowCells(item, me);
+      const rowArray = Array.from({ length: 28 }, (_, col) => {
+        const c = (rowCells as any)[col];
+        if (!c) {
+          return { v: '', s: col === 27 ? 'id' : 'ar' };
         }
-      }
-    }
+        return { v: c.v ?? '', s: c.s ?? (col === 27 ? 'id' : 'ar') };
+      });
 
-    // 0..26 — не трогаем ID (27) чтобы не сбить стиль 'id'
-    for (let col = 0; col < 27; col++) {
-      let s = 'ar';
-      if (isManager && (MANAGER_LOCKED_COLUMNS.has(col) || blocked.has(col))) {
-        s = 'lockedCol';
-      } else if (item?.managerBlock && !isAdminOrBuh) {
-        s = 'lockedRow';
-      }
-      sheet.getRange(rowIndex, col).setValue({ s });
+      sheet.getRange(rowIndex, 0, 1, 28).setValues([rowArray]);
+    } catch (e) {
+      console.error('[renderRow] failed', e);
     }
   };
 
-  const renderRow = (sheet: any, item: TransportAccounting, rowIndex: number) => {
-    const rowVals = Array.from({ length: 28 }, (_, col) => ({ v: mapValueByCol(item, col) }));
-    sheet.getRange(rowIndex, 0, 1, 28).setValues([rowVals]);
-    applyRowStyles(sheet, item, rowIndex);
+  // Оставляем для совместимости — но теперь не используем setValue по ячейке.
+  const applyRowStyles = (sheet: any, item: any, rowIndex: number) => {
+    try {
+      const isManager = me?.roleCode === 'ROLE_MANAGER';
+      const isAdminOrBuh = me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH';
+
+      const blocked = new Set<number>();
+      if (isManager && Array.isArray(item?.managerBlockListCell)) {
+        for (const rng of item.managerBlockListCell) {
+          if (!Array.isArray(rng)) continue;
+          if (rng.length === 1 && rng[0]) blocked.add(lettersToIndex(rng[0]));
+          else if (rng.length >= 2 && rng[0] && rng[1]) {
+            const a = lettersToIndex(rng[0]); const b = lettersToIndex(rng[1]);
+            for (let c = a; c <= b; c++) blocked.add(c);
+          }
+        }
+      }
+
+      // NOTE: этот метод оставлен для редких случаев, но основной путь установки значений/стилей —
+      // через renderRow / rerenderSheet (batch setValues).
+      for (let col = 0; col < 27; col++) {
+        let s = 'ar';
+        if (isManager && (MANAGER_LOCKED_COLUMNS.has(col) || blocked.has(col))) {
+          s = 'lockedCol';
+        } else if (item?.managerBlock && !isAdminOrBuh) {
+          s = 'lockedRow';
+        }
+        try {
+          // безопасная запись стиля (не трогаем значение)
+          sheet.getRange(rowIndex, col).setValue({ s });
+        } catch { /* noop */ }
+      }
+    } catch (e) {
+      console.warn('[applyRowStyles] failed', e);
+    }
+  };
+
+  const renderRowSyncFast = (sheet: any, item: TransportAccounting, rowIndex: number) => {
+    // fallback synchronous render without calling buildRowCells (если нужно)
+    try {
+      const rowVals = Array.from({ length: 28 }, (_, col) => {
+        const v = mapValueByCol(item, col);
+        const s = (col === 27) ? 'id' : (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(col) ? 'lockedCol' : 'ar');
+        return { v, s };
+      });
+      sheet.getRange(rowIndex, 0, 1, 28).setValues([rowVals]);
+    } catch (e) {
+      console.error('[renderRowSyncFast] failed', e);
+    }
   };
 
   // ---------- build initial workbook ----------
@@ -208,6 +250,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     const rowIndexMap = new Map<number, number>();
     for (let r = 0; r < data.length; r++) {
       const rec = data[r]!;
+      // buildRowCells возвращает структуру { colIndex: { v, s }, ... }
+      // используем асинхронно, но здесь в инициализации можно работать синхронно,
+      // так как buildRowCells в текущей реализации синхронен — всё же используем await на всякий случай.
       const rowCells = await buildRowCells(rec, me);
       cellData[r + 1] = rowCells;
       const recId = Number(rec?.id);
@@ -221,7 +266,8 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     for (let r = data.length + 1; r < totalRows; r++) {
       const empty: Record<number, { v: any, s?: string }> = {};
       for (let c = 0; c < 28; c++) {
-        let style = 'a';
+        // исправлено: ранее было 'a' (опечатка) — используем 'ar' (defined in styles.ts)
+        let style = 'ar';
         if (c === 27) style = 'id';
         else if (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(c)) style = 'lockedCol'; // <- ВСЕГДА для менеджера
         else if (c === 0) style = 'ar';
@@ -305,7 +351,8 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     let scheduled = false;
     const RENDER_ONLY_ACTIVE_SHEET = me?.roleCode === 'ROLE_ADMIN';
 
-    const flush = () => {
+    // flush теперь async — ожидает renderRow, который использует batch setValues
+    const flush = async () => {
       scheduled = false;
       const wb = univerAPI.getActiveWorkbook();
       if (!wb) return;
@@ -335,7 +382,10 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
               const idx = arr.findIndex((r: any) => Number(r?.id) === id);
               if (idx >= 0) rowIndex = idx + 1;
             }
-            if (rowIndex) renderRow(sheet, it as TransportAccounting, rowIndex);
+            if (rowIndex) {
+              // ожидаем renderRow, чтобы гарантировать порядок и консистентность
+              await renderRow(sheet, it as TransportAccounting, rowIndex);
+            }
           }
         }
 
@@ -345,7 +395,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
           for (const it of creates) {
             const anchored = store.takeAnchoredCreateRow(listName);
             const rowIndex = (typeof anchored === 'number' && anchored >= 1) ? anchored : (cursor + 1);
-            renderRow(sheet, it as TransportAccounting, rowIndex);
+            await renderRow(sheet, it as TransportAccounting, rowIndex);
             const id = Number(it?.id);
             if (Number.isFinite(id)) idToRow.set(id, rowIndex);
             if (!(typeof anchored === 'number' && anchored >= 1)) cursor++;
@@ -355,7 +405,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       }
     };
 
-    const rerenderSheet = (listName: string) => {
+    const rerenderSheet = async (listName: string) => {
       const wb = univerAPI.getActiveWorkbook();
       const sheet = wb?.getSheetByName(listName);
       if (!sheet) return;
@@ -363,13 +413,19 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       const rows = items.length;
 
       if (rows > 0) {
-        const matrix = items.map((it: TransportAccounting) =>
-          Array.from({ length: 28 }, (_, col) => ({ v: mapValueByCol(it, col) }))
-        );
+        const matrix: any[] = [];
+        for (let i = 0; i < items.length; i++) {
+          const obj = await buildRowCells(items[i], me);
+          const rowArr = Array.from({ length: 28 }, (_, col) => {
+            const c = (obj as any)[col];
+            return c ? { v: c.v ?? '', s: c.s ?? (col === 27 ? 'id' : 'ar') } : { v: '', s: col === 27 ? 'id' : 'ar' };
+          });
+          matrix.push(rowArr);
+        }
         sheet.getRange(1, 0, rows, 28).setValues(matrix);
-        for (let r = 0; r < rows; r++) applyRowStyles(sheet, items[r], r + 1);
       }
 
+      // обновляем id->row карту
       const idToRow = new Map<number, number>();
       for (let r = 0; r < rows; r++) {
         const id = Number(items[r]?.id);
@@ -381,7 +437,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       if (prev > rows) {
         const toClear = prev - rows;
         const empty = Array.from({ length: toClear }, () =>
-          Array.from({ length: 28 }, () => ({ v: '' }))
+          Array.from({ length: 28 }, () => ({ v: '', s: 'ar' }))
         );
         sheet.getRange(rows + 1, 0, toClear, 28).setValues(empty);
       }
@@ -419,7 +475,8 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         if (!items?.length) continue;
 
         if (msg.type === 'status_delete') {
-          setTimeout(() => rerenderSheet(listName), 0);
+          // rerenderSheet async
+          setTimeout(() => { rerenderSheet(listName).catch(console.error); }, 0);
           continue;
         }
 
@@ -433,7 +490,10 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
 
       if (!scheduled) {
         scheduled = true;
-        requestAnimationFrame(flush);
+        requestAnimationFrame(() => {
+          // flush может быть async
+          (async () => { try { await flush(); } catch (e) { console.error(e); } })();
+        });
       }
     });
   } catch (e) {
