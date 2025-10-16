@@ -1,17 +1,24 @@
 <template>
   <div class="max-w-4xl mx-auto">
-      <UTabs :items="items">
+      <UTabs 
+        :items="items" 
+        v-if="user?.roleCode === 'ROLE_ADMIN'"
+        :unmount-on-hide="false"
+      >
             <template #lk>
               <UserLK />
             </template>
             <template #employees>
-      
+              <AETab />
             </template>
       </UTabs>
+      <UserLK v-else />
   </div>
 </template>
 
 <script setup lang="ts">
+import { getUser } from '~/helpers/getUser'
+
 useHead({ title: 'СЛТ Личный кабинет' })
 definePageMeta({ layout: 'default' })
 
@@ -27,6 +34,8 @@ const items = [
         slot: 'employees'
     }
 ]
+
+const user = getUser()
 </script>
 
 <style scoped>

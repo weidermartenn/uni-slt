@@ -19,7 +19,8 @@ export const useEmployeeStore = defineStore("employee", {
   state: () => ({
     employees: [],
     employeesAllInfo: [] as User[],
-    listForLK: [] as any[]
+    listForLK: [] as any[],
+    listForLKById: [] as any[]
   }),
 
   actions: {
@@ -47,6 +48,11 @@ export const useEmployeeStore = defineStore("employee", {
       const id = userInfo?.id
       const data = await $fetch(`${kingsApiBase}/user/${id}`, { method: 'GET', headers: authHeaders() })
       this.listForLK = data
+    },
+
+    async fetchForLKById(id: number) {
+      const data = await $fetch(`${kingsApiBase}/user/${id}`, { method: 'GET', headers: authHeaders() })
+      this.listForLKById = data
     }
   }
 });
