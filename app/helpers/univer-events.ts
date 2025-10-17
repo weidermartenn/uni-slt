@@ -5,10 +5,9 @@ import { useSheetStore } from "~/stores/sheet-store-optimized";
 import { useUniverStore } from "~/stores/univer-store";
 import { getUser } from "./getUser";
 import type { TransportAccounting } from "~/entities/TransportAccountingDto/types";
-import { useUniverWorker } from "~/composables/useUniverWorker";
+import { rpcClient } from '~/composables/univerWorkerClient'
 
 export function registerUniverEvents(univerAPI: FUniver) {
-  const { handleRowChangeOptimized } = useUniverWorker();
 
   // ====== Константы/флаги ======
   const dateCols = new Set([0, 4, 11, 12, 19]); // A,E,L,M,T (0-based)
@@ -640,11 +639,19 @@ export function registerUniverEvents(univerAPI: FUniver) {
         }
 
         if (createDtos.length > 0) {
-          await sheetStore.addRecords(createDtos);
+          await rpcClient.call('batchRecords', {
+            type: 'create',
+            listName,
+            records: createDtos
+          })
         }
 
         if (updateDtos.length > 0) {
-          await sheetStore.updateRecords(updateDtos);
+          await rpcClient.call('batchRecords', {
+            type: 'update',
+            listName,
+            records: updateDtos
+          })
         }
 
         for (const r of createdRows) {

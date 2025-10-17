@@ -44,6 +44,7 @@ import { useToast } from '#imports'
 import { useEmployeeStore } from '~/stores/employee-store'
 import { useSheetStore } from '~/stores/sheet-store'
 import { useUniverStore } from '~/stores/univer-store'
+import { rpcClient } from '~/composables/univerWorkerClient'
 
 definePageMeta({ ssr: false })
 useHead({ title: 'СЛТ Транспортный учет' })
@@ -179,24 +180,28 @@ async function onDeleteClick() {
     console.log(`[Delete] Начало удаления ${ids.length} записей`)
     const startTime = performance.now()
 
-    await store.deleteRecords(ids)
+    const result = await rpcClient.call('deleteRecords', { ids })
+
+    if (result?.success) {
+      toast.add({
+        title: 'Записи удалены',
+        description: `Всего удалено: ${ids.length}`,
+        color: 'success',
+        icon: 'i-lucide-check'
+      })
+    } else {
+      throw new Error(result?.error || 'Worker error')
+    }
 
     const endTime = performance.now()
     console.log(`[Delete] Конец удаления. Время: ${endTime - startTime} ms`)
-
-    toast.add({
-      title: 'Записи удалены',
-      description: `Всего удалено: ${ids.length}`,
-      color: 'success',
-      icon: 'i-lucide-check'
-    })
   } catch (e) {
-    console.error(e)
+    console.error('[Delete] Error: ', e)
     toast.add({
       title: 'Ошибка удаления',
-      description: 'Не удалось удалить записи. Попробуйте ещё раз.',
+      description: 'Не удалось удалить записи. Попробуйте еще раз.',
       color: 'error',
-      icon: 'i-lucide-x-circle'
+      icon: 'i-lucide-alert-triangle'
     })
   } finally {
     showBusy.value = false
