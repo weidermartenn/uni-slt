@@ -1,23 +1,6 @@
 <template>
   <UApp>
     <div class="relative w-full h-[90vh]">
-      <!-- <div
-        v-show="univerStore.uiLoading"
-        class="absolute inset-0 flex items-center justify-center bg-white/90 dark:bg-zinc-900 z-10"
-      >
-        <div class="text-center">
-          <UIcon name="i-lucide-loader-pinwheel" class="w-10 h-10 animate-spin text-zinc-900 dark:text-zinc-100" />
-          <p class="mt-2 text-lg font-medium text-zinc-900 dark:text-zinc-100">Загрузка данных таблицы</p>
-          
-          <!-- Сообщение о долгой загрузке -->
-          <!-- <div v-if="showLongLoadMessage" class="mt-4 p-3 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-md max-w-md mx-auto">
-            <p class="text-amber-800 dark:text-amber-200 text-sm">
-              Страница долго загружается. Выключите VPN/прокси и перезагрузите страницу.
-            </p>
-          </div>
-        </div>
-      </div> --> 
-
       <div class="absolute flex items-center gap-10 -top-13 right-10">
         <div v-show="deleteState.pending" class="v-row items-center p-2 rounded-md bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
           <UIcon name="i-lucide-loader-circle" class="w-6 h-6 animate-spin" />
@@ -45,6 +28,7 @@ import { useEmployeeStore } from '~/stores/employee-store'
 import { useSheetStore } from '~/stores/sheet-store'
 import { useUniverStore } from '~/stores/univer-store'
 import { rpcClient } from '~/composables/univerWorkerClient'
+import { CollaborationSocketService } from '@univerjs/presets/lib/types/preset-docs-collaboration/index.js'
 
 definePageMeta({ ssr: false })
 useHead({ title: 'СЛТ Транспортный учет' })
@@ -54,16 +38,12 @@ const api = ref<FUniver>()
 const records = ref<Record<string, any[]>>({})
 
 const DELETE_CONFIRM_TIMEOUT = 5000
-const LONG_LOAD_TIMEOUT = 7000 // 7 секунд
+const LONG_LOAD_TIMEOUT = 7000
 
-const deleteState = reactive<{
-  pending: boolean
-  rows: number[]
-  timeout?: number | null
-}>({
+const deleteState = reactive({
   pending: false,
-  rows: [],
-  timeout: null
+  rows: [] as number[],
+  timeout: null as number | null,
 })
 
 const univerStore = useUniverStore()
@@ -71,15 +51,16 @@ const showBusy = ref(false)
 const showLongLoadMessage = ref(false)
 let longLoadTimeout: NodeJS.Timeout | null = null
 
-// 🧠 Получение выделения и данных
 function getSelectionData() {
   const wb = api.value?.getActiveWorkbook?.()
   const ws = wb?.getActiveSheet?.()
   const ar = ws?.getSelection?.()?.getActiveRange?.()
   if (!ws || !ar) return null
 
-  const start0 = Math.max(1, (ar?._range?.startRow ?? 1))
-  const end0 = Math.max(1, (ar?._range?.endRow ?? 1))
+  // @ts-ignore
+  const start0 = Math.max(1, ar?._range?.startRow ?? 1)
+  // @ts-ignore
+  const end0 = Math.max(1, ar?._range?.endRow ?? 1)
 
   const start1 = start0 + 1
   const end1 = end0 + 1
@@ -92,7 +73,6 @@ function getSelectionData() {
   return { ws, start0, end0, start1, end1, range, values }
 }
 
-// 🗑️ Обработка удаления
 async function onDeleteClick() {
   const selection = getSelectionData()
   if (!selection) {
@@ -100,7 +80,13 @@ async function onDeleteClick() {
     return
   }
 
-  const { start1, end1, ws, range } = selection
+  const { start1, end1, range, values } = selection
+
+  // Сохраняем ids ДО обнуления UI
+  const ID_COL_INDEX = 27
+  const ids = (values as any[][])
+    .map((row) => Number(row?.[ID_COL_INDEX]))
+    .filter((id) => Number.isFinite(id) && id > 0)
 
   if (!deleteState.pending) {
     deleteState.pending = true
@@ -121,23 +107,11 @@ async function onDeleteClick() {
     deleteState.timeout = null
   }
 
-  const sel = getSelectionData()
-  if (!sel) {
-    deleteState.pending = false
-    deleteState.rows = []
-    return
-  }
-
-  const ID_COL_INDEX = 27
-  const ids = (sel.values as any[][])
-    .map((row) => Number(row?.[ID_COL_INDEX]))
-    .filter((id) => Number.isFinite(id) && id > 0)
-
+  // Очищаем UI
   if (ids.length > 0) {
-    const rows = sel.end1 - sel.start1 + 1
-    const cols = 28
+    const rows = end1 - start1 + 1
     const empty = Array.from({ length: rows }, () =>
-      Array.from({ length: cols }, () => ({ v: '' }))
+      Array.from({ length: 28 }, () => ({ v: '' }))
     )
 
     try {
@@ -145,14 +119,11 @@ async function onDeleteClick() {
       const { rendered } = getLifeCycleState(api.value!)
 
       if (rendered?.value) {
-        try {
-          univerStore.beginQuiet()
-          sel.range.setValues?.(empty)
-        } finally {
-          univerStore.endQuiet()
-        }
+        univerStore.beginQuiet()
+        range.setValues?.(empty)
+        univerStore.endQuiet()
       } else {
-        sel.range.setValues?.(empty)
+        range.setValues?.(empty)
       }
     } catch (e) {
       console.error(e)
@@ -161,6 +132,7 @@ async function onDeleteClick() {
 
   await nextTick()
 
+  // Если нет ID — ничего не удаляем в воркере
   if (ids.length === 0) {
     deleteState.pending = false
     deleteState.rows = []
@@ -174,12 +146,10 @@ async function onDeleteClick() {
   }
 
   try {
-    const store = useSheetStore()
     showBusy.value = true
-
     console.log(`[Delete] Начало удаления ${ids.length} записей`)
-    const startTime = performance.now()
 
+    const startTime = performance.now()
     const result = await rpcClient.call('deleteRecords', { ids })
 
     if (result?.success) {
@@ -210,7 +180,6 @@ async function onDeleteClick() {
   }
 }
 
-// 🔁 Инициализация
 onMounted(async () => {
   const { initUniver } = await import('~/composables/initUniver')
   const { getLifeCycleState } = await import('~/composables/lifecycle')
@@ -219,11 +188,8 @@ onMounted(async () => {
 
   univerStore.setUiLoading(true)
 
-  // Запускаем таймер для показа сообщения о долгой загрузке
   longLoadTimeout = setTimeout(() => {
-    if (univerStore.uiLoading) {
-      showLongLoadMessage.value = true
-    }
+    if (univerStore.uiLoading) showLongLoadMessage.value = true
   }, LONG_LOAD_TIMEOUT)
 
   await store.fetchRecords()
@@ -255,33 +221,29 @@ onMounted(async () => {
 
   const dataLoaded = ref(true)
 
-  watch(
-    [rendered, dataLoaded, fontsReady],
-    ([r, d, f]) => {
-      if (r && d && f) {
-        univerStore.setUiLoading(false)
-        univerStore.setUiReady(true)
-        // Очищаем таймер при успешной загрузке
-        if (longLoadTimeout) {
-          clearTimeout(longLoadTimeout)
-          longLoadTimeout = null
-        }
-        showLongLoadMessage.value = false
-      } else {
-        univerStore.setUiLoading(true)
-      }
-    },
-    { immediate: true }
-  )
+    console.log('[TEST] call to worker')
+    const result = await rpcClient.call('deleteRecords', { ids: [3431] }).then(res => console.log(res))
+    console.log('[TEST] result from worker:', result)
 
-  const { cleanup } = useUniverWorker()
+  watch([rendered, dataLoaded, fontsReady], ([r, d, f]) => {
+    if (r && d && f) {
+      univerStore.setUiLoading(false)
+      univerStore.setUiReady(true)
+      if (longLoadTimeout) {
+        clearTimeout(longLoadTimeout)
+        longLoadTimeout = null
+      }
+      showLongLoadMessage.value = false
+    } else {
+      univerStore.setUiLoading(true)
+    }
+  }, { immediate: true })
+
   onBeforeUnmount(() => {
-    // Очищаем таймер при размонтировании компонента
     if (longLoadTimeout) {
       clearTimeout(longLoadTimeout)
       longLoadTimeout = null
     }
-    cleanup?.()
   })
 })
 </script>

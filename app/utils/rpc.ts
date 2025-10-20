@@ -14,7 +14,7 @@ type RPCHandler = (payload?: any) => any | Promise<any>
 
 export class RPCClient {
     private _id = 0 
-    private _resolvers = new Map<number, { resolve: Function; reject: Function }>
+    private _resolvers = new Map<number, { resolve: Function; reject: Function }>()
     private _worker: Worker
 
     constructor(worker: Worker) {
@@ -53,14 +53,16 @@ export class RPCServer {
             if (!msg.method || !this._handlers.has(msg.method)) return 
 
             const handler = this._handlers.get(msg.method)
-            try {
-                const result = await handler(msg.payload)
-                if (msg.id !== 0) {
-                    ;(port as DedicatedWorkerGlobalScope).postMessage({ id: msg.id, result })
-                }
-            } catch (e) {
-                if (msg.id !== 0) {
-                    ;(port as DedicatedWorkerGlobalScope).postMessage({ id: msg.id, error: e })
+            if (handler) {
+                try {
+                    const result = await handler(msg.payload)
+                    if (msg.id !== 0) {
+                        ;(port as DedicatedWorkerGlobalScope).postMessage({ id: msg.id, result })
+                    }
+                } catch (e) {
+                    if (msg.id !== 0) {
+                        ;(port as DedicatedWorkerGlobalScope).postMessage({ id: msg.id, error: e })
+                    }
                 }
             }
         })

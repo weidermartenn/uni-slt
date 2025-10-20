@@ -454,16 +454,18 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const rowVals = aws?.getRange(row, 0, 1, 28).getValues()?.[0] ?? [];
       const idStr = toStr(rowVals[27]);
 
-      await handleRowChangeOptimized(
-        row,
-        col,
-        rowVals,
+      let dto = buildSR(rowVals, listName, Number(idStr))
+      if (me?.roleCode === "ROLE_MANAGER") {
+        const arr = (sheetStore.records as any)?.[listName]
+        const prevRec = Array.isArray(arr) ? arr[row - 1] : undefined 
+        dto = maskDtoForManager(dto, listName, row, sheetStore, prevRec)
+      }
+
+      await rpcClient.call('batchRecords', {
+        type: Number(idStr) > 0 ? 'update' : 'create',
         listName,
-        idStr,
-        buildSR,
-        maskDtoForManager,
-        createManagerSafeDto
-      );
+        records: [dto]
+      })
     }
   );
 

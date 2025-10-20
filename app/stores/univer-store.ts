@@ -1,6 +1,5 @@
 import { defineStore } from "pinia";
 import type { FUniver } from "@univerjs/core/facade";
-import { get, set } from "@nuxt/ui/runtime/utils/index.js";
 
 export const useUniverStore = defineStore("univer", {
     state: () => ({
