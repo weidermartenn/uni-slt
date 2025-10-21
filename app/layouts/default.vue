@@ -50,20 +50,19 @@
             <UIcon :name="item.icon" class="h-18 w-18" />
             <span>{{ item.title }}</span>
           </UButton>
-          <div v-if="isAdmin" class="v-col my-6 text-center">
-            <span class="text-xl font-semibold text-white text-center"
-              >Администрирование</span
+
+          <div class="grid grid-cols-2 gap-2">
+            <UButton
+              v-for="i in filesItems"
+              :key="i.id"
+              class="slideover-button"
+              @click="$router.push(i.to)"
             >
-            <div class="grid grid-cols-1 gap-4">
-              <UButton
-                @click="$router.push('/admin')"
-                class="slideover-button"
-              >
-                <UIcon name="i-lucide-users" class="h-16 w-16" />
-                <span>Сотрудники</span>
-              </UButton>
-            </div>
+              <UIcon :name="i.icon" class="h-18 w-18" />
+              <span>{{ i.title }}</span>
+            </UButton>
           </div>
+          
           <div class="grid grid-cols-1 gap-4">
             <UButton
               :ui="{ base: 'justify-center h-12 text-md' }"
@@ -111,6 +110,23 @@ const items: Item[] = [
     role: "user",
   },
 ];
+
+const filesItems: Item[] = [
+  {
+    id: 1,
+    title: "Заявки",
+    icon: "i-lucide-mail",
+    to: "/bids",
+    role: "user",
+  },
+  {
+    id: 2,
+    title: "Договоры",
+    icon: "i-lucide-file-text",
+    to: "/agreements",
+    role: "user",
+  }
+]
 
 const currentUser = getUser()
 
