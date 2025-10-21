@@ -7,7 +7,13 @@ import { getUser } from "./getUser";
 import type { TransportAccounting } from "~/entities/TransportAccountingDto/types";
 import { rpcClient } from '~/composables/univerWorkerClient'
 
+console.log('kingsApiBase', kingsApiBase)
+
 export function registerUniverEvents(univerAPI: FUniver) {
+  const config = useRuntimeConfig();
+  const kingsApiBase = config.public.kingsApiBase
+
+  console.log('univer-events.ts kingsApiBase', kingsApiBase);
 
   // ====== Константы/флаги ======
   const dateCols = new Set([0, 4, 11, 12, 19]); // A,E,L,M,T (0-based)
@@ -440,6 +446,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       if (!s || row === 0) return;
 
       const me = await getMe();
+      const token = me?.token
       const sheetStore = useSheetStore();
       const listName = s.getName();
 
@@ -461,10 +468,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
         dto = maskDtoForManager(dto, listName, row, sheetStore, prevRec)
       }
 
+      // ВЫЗОВ ВОРКЕРА ДЛЯ ДОБАВЛЕНИЯ/ИЗМЕНЕНИЯ
       await rpcClient.call('batchRecords', {
         type: Number(idStr) > 0 ? 'update' : 'create',
         listName,
-        records: [dto]
+        records: [dto],
+        token,
+        kingsApiBase: kingsApiBase
       })
     }
   );
@@ -584,6 +594,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         const listName = s.getName();
         const sheetStore = useSheetStore();
         const me = await getMe();
+        const token = me?.token
 
         if (me?.roleCode === "ROLE_MANAGER") {
           for (let r = startRow; r <= endRow; r++) {
@@ -644,7 +655,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
           await rpcClient.call('batchRecords', {
             type: 'create',
             listName,
-            records: createDtos
+            records: createDtos,
+            token,
+            kingsApiBase: kingsApiBase
           })
         }
 
@@ -652,7 +665,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
           await rpcClient.call('batchRecords', {
             type: 'update',
             listName,
-            records: updateDtos
+            records: updateDtos,
+            token,
+            kingsApiBase: kingsApiBase
           })
         }
 
@@ -844,6 +859,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const listName = sheet.getName?.() || '';
       const store = useSheetStore();
       const me = await getMe();
+      const token = me?.token;
 
       // Блокировки для менеджера
       let hadLocked = false;
@@ -956,7 +972,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       });
       if (!rowsFinal.length) return;
 
-      // Формируем DTO и отправляем в стор
+      // Формируем DTO и отправляем в воркер
       const createDtos: any[] = [];
       const updateDtos: any[] = [];
       const createdRows: number[] = [];
@@ -1003,8 +1019,25 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
         }
 
-        if (updateDtos.length) await store.updateRecords(updateDtos);
-        if (createDtos.length) await store.addRecords(createDtos);
+        // ВЫЗОВ ВОРКЕРА ДЛЯ ПАКЕТНОЙ ОБРАБОТКИ
+        if (updateDtos.length) {
+          await rpcClient.call('batchRecords', {
+            type: 'update',
+            listName,
+            records: updateDtos,
+            token,
+            kingsApiBase: kingsApiBase
+          });
+        }
+        if (createDtos.length) {
+          await rpcClient.call('batchRecords', {
+            type: 'create',
+            listName,
+            records: createDtos,
+            token,
+            kingsApiBase: kingsApiBase
+          });
+        }
 
         for (const r of createdRows) await paintManagerLockedColsOnRow(ws, r);
 

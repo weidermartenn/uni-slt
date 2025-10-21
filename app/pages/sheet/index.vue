@@ -28,7 +28,6 @@ import { useEmployeeStore } from '~/stores/employee-store'
 import { useSheetStore } from '~/stores/sheet-store'
 import { useUniverStore } from '~/stores/univer-store'
 import { rpcClient } from '~/composables/univerWorkerClient'
-import { CollaborationSocketService } from '@univerjs/presets/lib/types/preset-docs-collaboration/index.js'
 
 definePageMeta({ ssr: false })
 useHead({ title: 'СЛТ Транспортный учет' })
@@ -132,7 +131,7 @@ async function onDeleteClick() {
 
   await nextTick()
 
-  // Если нет ID — ничего не удаляем в воркере
+  // Если нет ID — ничего не удаляем на сервере
   if (ids.length === 0) {
     deleteState.pending = false
     deleteState.rows = []
@@ -150,23 +149,21 @@ async function onDeleteClick() {
     console.log(`[Delete] Начало удаления ${ids.length} записей`)
 
     const startTime = performance.now()
-    const result = await rpcClient.call('deleteRecords', { ids })
 
-    if (result?.success) {
-      toast.add({
-        title: 'Записи удалены',
-        description: `Всего удалено: ${ids.length}`,
-        color: 'success',
-        icon: 'i-lucide-check'
-      })
-    } else {
-      throw new Error(result?.error || 'Worker error')
-    }
+    // УДАЛЕНИЕ В ОСНОВНОМ ПОТОКЕ - синхронно с UI
+    await useSheetStore().deleteRecords(ids)
+
+    toast.add({
+      title: 'Записи удалены',
+      description: `Всего удалено: ${ids.length}`,
+      color: 'success',
+      icon: 'i-lucide-check'
+    })
 
     const endTime = performance.now()
     console.log(`[Delete] Конец удаления. Время: ${endTime - startTime} ms`)
-  } catch (e) {
-    console.error('[Delete] Error: ', e)
+  } catch (error) {
+    console.error('[Delete] Error: ', error)
     toast.add({
       title: 'Ошибка удаления',
       description: 'Не удалось удалить записи. Попробуйте еще раз.',
@@ -220,11 +217,7 @@ onMounted(async () => {
   }
 
   const dataLoaded = ref(true)
-
-    console.log('[TEST] call to worker')
-    const result = await rpcClient.call('deleteRecords', { ids: [3431] }).then(res => console.log(res))
-    console.log('[TEST] result from worker:', result)
-
+    
   watch([rendered, dataLoaded, fontsReady], ([r, d, f]) => {
     if (r && d && f) {
       univerStore.setUiLoading(false)

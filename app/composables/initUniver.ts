@@ -522,5 +522,6 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   // ---------- register UI edit events (ПОСЛЕ готовности) ----------
   registerUniverEvents(univerAPI);
 
+  ;(globalThis as any).univerInstance = univerAPI
   return univerAPI;
 }

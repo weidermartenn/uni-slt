@@ -1,0 +1,1 @@
+export const kingsApiBase = process.env.NUXT_PUBLIC_KINGS_API_BASE
