@@ -123,7 +123,7 @@ const filesItems: Item[] = [
     id: 2,
     title: "Договоры",
     icon: "i-lucide-file-text",
-    to: "/agreements",
+    to: "",
     role: "user",
   }
 ]

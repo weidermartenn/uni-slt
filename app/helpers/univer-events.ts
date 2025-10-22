@@ -6,21 +6,18 @@ import { useUniverStore } from "~/stores/univer-store";
 import { getUser } from "./getUser";
 import type { TransportAccounting } from "~/entities/TransportAccountingDto/types";
 import { rpcClient } from '~/composables/univerWorkerClient'
+import { checkKPP } from "~/pages/sheet/chechKPP";
 
-console.log('kingsApiBase', kingsApiBase)
 
 export function registerUniverEvents(univerAPI: FUniver) {
   const config = useRuntimeConfig();
   const kingsApiBase = config.public.kingsApiBase
-
-  console.log('univer-events.ts kingsApiBase', kingsApiBase);
 
   // ====== Константы/флаги ======
   const dateCols = new Set([0, 4, 11, 12, 19]); // A,E,L,M,T (0-based)
   // ВСЕГДА заблокированные для менеджера: E,K,L,M,R,T,Z,AA,AB
   const MANAGER_LOCKED_COLUMNS = new Set([4, 10, 11, 12, 17, 19, 25, 26, 27]);
 
-  const requestedRows = new Set<string>(); // защита от двойного create
   let batchPasteInProgress = false; // флаг периода вставки
   const processingRows = new Set<string>(); // антидубль для SVC каскадов
   const univerStore = useUniverStore();
@@ -704,6 +701,47 @@ export function registerUniverEvents(univerAPI: FUniver) {
     'sheet.command.paste-all',
   ]);
 
+  let timeoutId: NodeJS.Timeout 
+  const debounceCheckKPP = (dataStream: string, column: number) => {
+    clearTimeout(timeoutId)
+    timeoutId = setTimeout(async () => {
+      await performKPPCheck(dataStream, column)
+    }, 2000)
+  }
+
+  const performKPPCheck = async (dataStream: string, column: number) => {
+    const toast = useToast();
+      
+    try {
+      const result = await checkKPP(dataStream);
+      if (result.suggestions.length === 0) {
+        if (column === 7) {
+          toast.add({
+            title: 'ИНН клиента не найден',
+            icon: 'i-lucide-x',
+            color: 'error'
+          });
+      } else {
+          toast.add({
+            title: 'ИНН подрядчика не найден',
+            icon: 'i-lucide-x',
+            color: 'error'
+          });
+        }
+      }
+    } catch (error) {
+        console.error('Error checking KPP:', error);
+    }
+  };
+
+  const offEditChanging = univerAPI.addEvent(univerAPI.Event.SheetEditChanging, async (params: any) => {
+    if (params.column === 7 || params.column === 13) {
+      const dataStream = params.value._data.body.dataStream 
+
+      if (dataStream) debounceCheckKPP(dataStream, params.column)
+    }
+  })
+
   const offValueChanged = univerAPI.addEvent(
     univerAPI.Event.SheetValueChanged,
     async (params: any) => {
@@ -1061,6 +1099,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
     } catch { }
     try {
       (offPasted as any)?.dispose?.();
+    } catch { }
+    try {
+      (offEditChanging as any)?.dispose?.();
     } catch { }
     try {
       (offValueChanged as any)?.dispose?.();

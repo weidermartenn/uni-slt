@@ -27,7 +27,7 @@ import { useToast } from '#imports'
 import { useEmployeeStore } from '~/stores/employee-store'
 import { useSheetStore } from '~/stores/sheet-store'
 import { useUniverStore } from '~/stores/univer-store'
-import { rpcClient } from '~/composables/univerWorkerClient'
+import { checkKPP } from './chechKPP'
 
 definePageMeta({ ssr: false })
 useHead({ title: 'СЛТ Транспортный учет' })
@@ -192,8 +192,6 @@ onMounted(async () => {
   await store.fetchRecords()
   await employeeStore.fetchEmployees()
   records.value = store.records
-
-  console.log('🔁 Инициализация', records.value)
 
   api.value = await initUniver(records.value)
 
