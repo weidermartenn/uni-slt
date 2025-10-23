@@ -430,55 +430,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
   };
 
-  const offEditEnded = univerAPI.addEvent(
-    univerAPI.Event.SheetEditEnded,
-    async (params: any) => {
-      if (batchPasteInProgress) return;
-      const { row, column: col, isConfirm } = params;
-      if (!isConfirm) return;
-
-      const wb = univerAPI.getActiveWorkbook();
-      const aws = wb?.getActiveSheet();
-      const s = aws?.getSheet();
-      if (!s || row === 0) return;
-
-      const me = await getMe();
-      const token = me?.token
-      const sheetStore = useSheetStore();
-      const listName = s.getName();
-
-      if (
-        me?.roleCode === "ROLE_MANAGER" &&
-        isCellLockedForManager(listName, row, col, sheetStore)
-      ) {
-        revertSingleLockedCell(aws, listName, row, col, sheetStore);
-        return;
-      }
-
-      const rowVals = aws?.getRange(row, 0, 1, 28).getValues()?.[0] ?? [];
-      const idStr = toStr(rowVals[27]);
-
-      let dto = buildSR(rowVals, listName, Number(idStr))
-      if (me?.roleCode === "ROLE_MANAGER") {
-        const arr = (sheetStore.records as any)?.[listName]
-        const prevRec = Array.isArray(arr) ? arr[row - 1] : undefined 
-        dto = maskDtoForManager(dto, listName, row, sheetStore, prevRec)
-      }
-
-      // ВЫЗОВ ВОРКЕРА ДЛЯ ДОБАВЛЕНИЯ/ИЗМЕНЕНИЯ
-      await rpcClient.call('batchRecords', {
-        type: Number(idStr) > 0 ? 'update' : 'create',
-        listName,
-        records: [dto],
-        token,
-        kingsApiBase: kingsApiBase
-      })
-    }
-  );
-
   // ====== Вставка: до / после ======
   const normalizeNumberStr = (raw: any): string =>
     (raw ?? "").toString().replace(/\s+/g, "").replace(",", ".");
+
   const offBeforePaste = univerAPI.addEvent(
     univerAPI.Event.BeforeClipboardPaste,
     async (params: any) => {
@@ -648,6 +603,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
         }
 
+        console.log('createDtos: ', createDtos)
+
         if (createDtos.length > 0) {
           await rpcClient.call('batchRecords', {
             type: 'create',
@@ -688,7 +645,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
       } catch (e) {
         console.error("[univer-events] paste handler failed:", e);
       } finally {
-        batchPasteInProgress = false;
+        setTimeout(() => {
+          batchPasteInProgress = false
+        }, 100)
       }
     }
   );
@@ -740,6 +699,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       if (dataStream) debounceCheckKPP(dataStream, params.column)
     }
+
+    if (NUMERIC_COLS.has(params.column)) {
+      const dataStream = params.value._data.body.dataStream
+      if (dataStream && dataStream.includes(',')) {
+        params.value._data.body.dataStream = dataStream.replace(/,/g, '.')
+      }
+    }
   })
 
   const offValueChanged = univerAPI.addEvent(
@@ -752,7 +718,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? '';
 
       // Пропускаем явные вставки — у них свой пайплайн
-      if (PASTE_TRIGGERS.has(trigger)) return;
+      if (PASTE_TRIGGERS.has(trigger) || trigger.includes('paste')) return;
+
+      if (batchPasteInProgress) return;
 
       const wb = univerAPI.getActiveWorkbook();
       const ws = wb?.getActiveSheet();
@@ -908,6 +876,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
         for (const [row0, cols] of perRowRaw) {
           const allowed = new Set<number>();
           for (const col0 of cols) {
+            if (!NUMERIC_COLS.has(col0)) continue;
+            const v = cv[String(row0)]?.[String(col0)]?.v 
+            if (typeof v === 'string' && v.includes(',')) {
+              const normalized = normalizeNumberStr(v)
+              ws.getRange(row0, col0).setValue({ v: normalized });
+              (cv[String(row0)] ??= {})[String(col0)] = { v: normalized }
+            }
             if (isCellLockedForManager(listName, row0, col0, store)) {
               hadLocked = true;
               lockedCells.push({ row0, col0 });
@@ -1057,6 +1032,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
         }
 
+        console.log('createDtos: ', createDtos)
+
         // ВЫЗОВ ВОРКЕРА ДЛЯ ПАКЕТНОЙ ОБРАБОТКИ
         if (updateDtos.length) {
           await rpcClient.call('batchRecords', {
@@ -1091,9 +1068,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   // ====== Disposer ======
   return () => {
-    try {
-      (offEditEnded as any)?.dispose?.();
-    } catch { }
     try {
       (offBeforePaste as any)?.dispose?.();
     } catch { }
