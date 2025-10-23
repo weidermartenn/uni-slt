@@ -526,6 +526,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const offPasted = univerAPI.addEvent(
     univerAPI.Event.ClipboardPasted,
     async () => {
+      console.log("[univer-events] ClipboardPasted");
       const wb = univerAPI.getActiveWorkbook();
       const aws = wb?.getActiveSheet();
       const s = aws?.getSheet();
@@ -661,18 +662,18 @@ export function registerUniverEvents(univerAPI: FUniver) {
   ]);
 
   let timeoutId: NodeJS.Timeout 
-  const debounceCheckKPP = (dataStream: string, column: number) => {
+  const debounceCheckKPP = (dataStream: string, column: number, row: number, worksheet: any) => {
     clearTimeout(timeoutId)
     timeoutId = setTimeout(async () => {
-      await performKPPCheck(dataStream, column)
+      await performKPPCheck(dataStream, column, row, worksheet)
     }, 2000)
   }
 
-  const performKPPCheck = async (dataStream: string, column: number) => {
+  const performKPPCheck = async (dataStream: string, column: number, row: number, worksheet: any) => {
     const toast = useToast();
-      
     try {
-      const result = await checkKPP(dataStream);
+      const cleanKPP = dataStream.replace(/[^\d]/g, '')
+      const result = await checkKPP(cleanKPP);
       if (result.suggestions.length === 0) {
         if (column === 7) {
           toast.add({
@@ -687,6 +688,22 @@ export function registerUniverEvents(univerAPI: FUniver) {
             color: 'error'
           });
         }
+      } else {
+        const suggestions = result.suggestions[0]
+        const companyName = suggestions.value.replace(/"/g, '')
+        const inn = suggestions.data.inn 
+        const kpp = suggestions.data.kpp
+
+        const newValue = `${companyName} ИНН ${inn}`
+
+        try {
+          univerStore.beginQuiet?.() 
+          worksheet.getRange(row, column).setValue({ v: newValue })
+        } catch (e) {
+          console.error(e)
+        } finally {
+          univerStore.endQuiet?.()
+        }
       }
     } catch (error) {
         console.error('Error checking KPP:', error);
@@ -697,7 +714,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (params.column === 7 || params.column === 13) {
       const dataStream = params.value._data.body.dataStream 
 
-      if (dataStream) debounceCheckKPP(dataStream, params.column)
+      if (dataStream)  {
+        const ws = params.worksheet 
+        const row = params.row 
+        const column = params.column
+
+        debounceCheckKPP(dataStream, column, row, ws)
+      }
     }
 
     if (NUMERIC_COLS.has(params.column)) {
