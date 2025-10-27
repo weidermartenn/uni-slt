@@ -1089,6 +1089,50 @@ export function registerUniverEvents(univerAPI: FUniver) {
     }
   );
 
+  const offClipboardChanged = univerAPI.addEvent(univerAPI.Event.ClipboardChanged, async (params: any) => {
+    const startRow = params.fromRange._range.startRow
+    const endRow = params.fromRange._range.endRow
+
+    console.log(params)
+
+    if (!startRow || !endRow) return
+
+    const me = getUser()
+
+    if (me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH') return
+    
+    const toast = useToast()
+
+    if (endRow - startRow >= 10) {
+      toast.add({
+        title: 'Копирование больше 10 строк',
+        description: 'Вам запрещено копировать больше 10 строк за раз. Обратитесь к администратору.',
+        color: 'error',
+        icon: 'i-lucide-alert-triangle'
+      })
+      params.text = ''
+      params.html = ''
+      
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText('')
+        }
+
+        else if (document.execCommand) {
+          const textArea = document.createElement('textarea');
+          textArea.value = ''
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textArea);
+        }
+      } catch (e) {
+        console.error(e)
+      }
+    }
+  });
+
   // ====== Disposer ======
   return () => {
     try {
@@ -1105,6 +1149,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
     } catch { }
     try {
       offAction?.();
-    } catch { } // <— отписка от сокета
-  };
+    } catch { }
+    try {
+      (offClipboardChanged as any)?.dispose?.();
+    } catch { }
+  }
 }
