@@ -178,10 +178,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   // buildSR: нормализация дат
   const buildSR = (rowVals: any[], listName: string, id: number = 0) => {
-    const v = (i: number) =>
-      dateCols.has(i)
-        ? normalizeDateInput(rowVals[i]) ?? ""
-        : toStr(rowVals[i]);
+    const v = (i: number) => {
+      if (dateCols.has(i)) {
+        return normalizeDateInput(rowVals[i]) ?? "";
+      } else if (NUMERIC_COLS.has(i)) {
+        return normalizeNumberStr(toStr(rowVals[i]));
+      } else return toStr(rowVals[i])
+    };
 
     return {
       additionalExpenses: v(24),
@@ -440,15 +443,20 @@ export function registerUniverEvents(univerAPI: FUniver) {
       batchPasteInProgress = true;
       const wb = univerAPI.getActiveWorkbook();
       const aws = wb?.getActiveSheet();
-      const startCol =
-        aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0;
+      const startCol = aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0;
+
       let changed = false;
-      const norm = (v: any, c: number) =>
-        dateCols.has(c)
-          ? normalizeDateInput(v) ?? v
-          : NUMERIC_COLS.has(c)
-            ? normalizeNumberStr(v)
-            : v;
+
+      const norm = (v: any, c: number) => {
+        const absoluteCol = startCol + c 
+
+        if (dateCols.has(absoluteCol)) {
+          return normalizeDateInput(v) ?? v 
+        } else if (NUMERIC_COLS.has(absoluteCol)) {
+          return normalizeNumberStr(v)
+        } else return v
+      }
+        
 
       if (typeof (params as any)?.text === "string") {
         const rows = ((params as any).text as string).split(/\r?\n/);
@@ -459,7 +467,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
               : line
                 .split("\t")
                 .map((cell, i) => {
-                  const nv = norm(cell, startCol + i);
+                  const nv = norm(cell, i);
                   if (nv !== cell) changed = true;
                   return nv;
                 })
@@ -471,30 +479,46 @@ export function registerUniverEvents(univerAPI: FUniver) {
           changed = true;
         }
       }
+
       if (typeof (params as any)?.html === "string") {
         const prev = (params as any).html as string;
-        const next = prev.replace(
+
+        let next = prev.replace(
           /\b(\d{2})\.(\d{2})\.(\d{4})\b/g,
           (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`
         );
+
+        next = next.replace(
+          /(\d+),(\d+)/g, 
+          (_m, int, dec) => `${int}.${dec}`
+        )
+
         if (next !== prev) {
           (params as any).html = next;
           changed = true;
         }
       }
+
       const data = (params as any)?.data ?? (params as any)?.clipboardData;
       if (data) {
         if (typeof data.html === "string") {
           const prev = data.html as string;
-          const next = prev.replace(
+          let next = prev.replace(
             /\b(\d{2})\.(\d{2})\.(\d{4})\b/g,
             (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`
           );
+
+          next = next.replace(
+            /(\d+),(\d+)/g, 
+            (_m, int, dec) => `${int}.${dec}`
+          );
+
           if (next !== prev) {
             data.html = next;
             changed = true;
           }
         }
+
         if (Array.isArray(data.cells)) {
           data.cells = data.cells.map((row: any[]) =>
             Array.isArray(row)
@@ -507,6 +531,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
           );
         }
       }
+
       if (Array.isArray((params as any)?.cells)) {
         (params as any).cells = (params as any).cells.map((row: any[]) =>
           Array.isArray(row)
@@ -549,6 +574,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
         const me = await getMe();
         const token = me?.token
 
+        console.log(`Paste range: rows ${startRow}-${endRow}, cols ${startCol}-${endCol}`);
+
         if (me?.roleCode === "ROLE_MANAGER") {
           for (let r = startRow; r <= endRow; r++) {
             let locked = false;
@@ -567,10 +594,29 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
         const createDtos: any[] = [];
         const updateDtos: any[] = [];
-        const createdRows: number[] = [];
 
+        try {
+          univerStore.beginQuiet?.() 
+          for (let r = startRow; r <= endRow; r++) {
+            for (let c = startCol; c <= endCol; c++) {
+              if (c === 27) continue 
+
+              const currentValue = aws.getRange(r, c).getValue() 
+              aws.getRange(r, c).setValue({
+                v: currentValue?.v ?? currentValue,
+              })
+              .clearFormat()
+            }
+          }
+        } catch (e) {
+          console.error(e)
+        } finally {
+          univerStore.endQuiet?.()
+        }
+        
         for (let r = startRow; r <= endRow; r++) {
           const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
+
           const idStr = toStr(rowVals[27]);
           let hasData = false;
 
@@ -600,7 +646,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
               );
             }
             createDtos.push(createDto);
-            createdRows.push(r);
           }
         }
 
@@ -626,8 +671,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
           })
         }
 
-        for (const r of createdRows) {
-          await paintManagerLockedColsOnRow(aws, r);
+        if (me?.roleCode === 'ROLE_MANAGER') {
+          for (let r = startRow; r <= endRow; r++) {
+            await paintManagerLockedColsOnRow(aws, r)
+          }
         }
 
         for (let r = startRow; r <= endRow; r++) {
