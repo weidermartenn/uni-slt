@@ -164,10 +164,10 @@ export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
     })
     .build()
 
-  sheet.getRange('J2:J3000')?.setDataValidation(numericRule)
-  sheet.getRange('Q2:Q3000')?.setDataValidation(numericRule)
-  sheet.getRange('R2:R3000')?.setDataValidation(numericRule)
-  sheet.getRange('Y2:Y3000')?.setDataValidation(numericRule)
+  sheet.getRange('J2:J3000')?.setDataValidation(numericRule).setNumberFormat('0.00')
+  sheet.getRange('Q2:Q3000')?.setDataValidation(numericRule).setNumberFormat('0.00')
+  sheet.getRange('R2:R3000')?.setDataValidation(numericRule).setNumberFormat('0.00')
+  sheet.getRange('Y2:Y3000')?.setDataValidation(numericRule).setNumberFormat('0.00')
 
   // --- Локальный обработчик SheetEditEnded для этого листа ------------------
   // Цель: отреагировать на изменения в «дропдаунах» (и вообще ввод) в колонках G/I/P/U/V/W/X.

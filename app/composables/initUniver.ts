@@ -26,6 +26,51 @@ import { nextTick } from 'vue';
 
 const tr = ref<number>(0);
 
+// Функция для нормализации числовых значений
+const normalizeNumericValue = (value: any): any => {
+  if (value == null || value === '') return value;
+  
+  // Если уже число - возвращаем как есть
+  if (typeof value === 'number') return value;
+  
+  // Если строка - пытаемся преобразовать
+  if (typeof value === 'string') {
+    // Убираем пробелы и заменяем запятые на точки
+    const normalized = value.toString()
+      .replace(/\s/g, '') // убираем пробелы
+      .replace(/,/g, '.'); // заменяем запятые на точки
+    
+    // Пытаемся преобразовать в число
+    const num = parseFloat(normalized);
+    
+    // Если получилось валидное число - возвращаем его
+    if (!isNaN(num) && isFinite(num)) {
+      return num;
+    }
+  }
+  
+  // Если не удалось преобразовать - возвращаем исходное значение
+  return value;
+};
+
+// Функция для нормализации числовых колонок в rowCells
+const normalizeRowCellsNumericValues = (rowCells: Record<number, { v: any; s?: string }>): Record<number, { v: any; s?: string }> => {
+  // Числовые колонки: J(9), Q(16), R(17), Y(24), Z(25), AA(26)
+  const numericColumns = new Set([9, 16, 17, 24, 25, 26]);
+  
+  const normalized = { ...rowCells };
+  numericColumns.forEach(col => {
+    if (normalized[col]) {
+      normalized[col] = {
+        ...normalized[col],
+        v: normalizeNumericValue(normalized[col].v)
+      };
+    }
+  });
+  
+  return normalized;
+};
+
 export async function initUniver(records: Record<string, any[]>): Promise<FUniver> {
   if (typeof window === 'undefined') throw new Error('initUniver must be called on the client');
 
@@ -123,37 +168,46 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
   };
 
   const mapValueByCol = (item: TransportAccounting, col: number): any => {
+    let value: any;
     switch (col) {
-      case 0: return item.dateOfPickup;
-      case 1: return item.numberOfContainer;
-      case 2: return item.cargo;
-      case 3: return item.typeOfContainer;
-      case 4: return item.dateOfSubmission;
-      case 5: return item.addressOfDelivery;
-      case 6: return item.ourFirm;
-      case 7: return item.client;
-      case 8: return item.formPayAs;
-      case 9: return item.summa;
-      case 10: return item.numberOfBill;
-      case 11: return item.dateOfBill;
-      case 12: return item.datePayment;
-      case 13: return item.contractor;
-      case 14: return item.driver;
-      case 15: return item.formPayHim;
-      case 16: return item.contractorRate;
-      case 17: return item.sumIssued;
-      case 18: return item.numberOfBillAdd;
-      case 19: return item.dateOfPaymentContractor;
-      case 20: return item.manager;
-      case 21: return item.departmentHead;
-      case 22: return item.clientLead;
-      case 23: return item.salesManager;
-      case 24: return item.additionalExpenses;
-      case 25: return item.income;
-      case 26: return item.incomeLearned;
-      case 27: return item.id;
-      default: return '';
+      case 0: value = item.dateOfPickup; break;
+      case 1: value = item.numberOfContainer; break;
+      case 2: value = item.cargo; break;
+      case 3: value = item.typeOfContainer; break;
+      case 4: value = item.dateOfSubmission; break;
+      case 5: value = item.addressOfDelivery; break;
+      case 6: value = item.ourFirm; break;
+      case 7: value = item.client; break;
+      case 8: value = item.formPayAs; break;
+      case 9: value = item.summa; break;
+      case 10: value = item.numberOfBill; break;
+      case 11: value = item.dateOfBill; break;
+      case 12: value = item.datePayment; break;
+      case 13: value = item.contractor; break;
+      case 14: value = item.driver; break;
+      case 15: value = item.formPayHim; break;
+      case 16: value = item.contractorRate; break;
+      case 17: value = item.sumIssued; break;
+      case 18: value = item.numberOfBillAdd; break;
+      case 19: value = item.dateOfPaymentContractor; break;
+      case 20: value = item.manager; break;
+      case 21: value = item.departmentHead; break;
+      case 22: value = item.clientLead; break;
+      case 23: value = item.salesManager; break;
+      case 24: value = item.additionalExpenses; break;
+      case 25: value = item.income; break;
+      case 26: value = item.incomeLearned; break;
+      case 27: value = item.id; break;
+      default: value = ''; break;
     }
+
+    // Нормализуем числовые колонки
+    const numericColumns = new Set([9, 16, 17, 24, 25, 26]);
+    if (numericColumns.has(col)) {
+      return normalizeNumericValue(value);
+    }
+
+    return value;
   };
 
   // --- ВСЕГДА заблокированные колонки для менеджера (E,K,L,M,R,T,Z,AA,AB) ---
@@ -166,7 +220,10 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
    */
   const renderRow = async (sheet: any, item: TransportAccounting, rowIndex: number) => {
     try {
-      const rowCells = await buildRowCells(item, me);
+      let rowCells = await buildRowCells(item, me);
+      // Нормализуем числовые значения
+      rowCells = normalizeRowCellsNumericValues(rowCells);
+      
       const rowArray = Array.from({ length: 28 }, (_, col) => {
         const c = (rowCells as any)[col];
         if (!c) {
@@ -222,7 +279,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     // fallback synchronous render without calling buildRowCells (если нужно)
     try {
       const rowVals = Array.from({ length: 28 }, (_, col) => {
-        const v = mapValueByCol(item, col);
+        const v = mapValueByCol(item, col); // mapValueByCol уже нормализует числовые значения
         const s = (col === 27) ? 'id' : (me?.roleCode === 'ROLE_MANAGER' && MANAGER_LOCKED_COLUMNS.has(col) ? 'lockedCol' : 'ar');
         return { v, s };
       });
@@ -251,9 +308,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     for (let r = 0; r < data.length; r++) {
       const rec = data[r]!;
       // buildRowCells возвращает структуру { colIndex: { v, s }, ... }
-      // используем асинхронно, но здесь в инициализации можно работать синхронно,
-      // так как buildRowCells в текущей реализации синхронен — всё же используем await на всякий случай.
-      const rowCells = await buildRowCells(rec, me);
+      let rowCells = await buildRowCells(rec, me);
+      // Нормализуем числовые значения в rowCells
+      rowCells = normalizeRowCellsNumericValues(rowCells);
       cellData[r + 1] = rowCells;
       const recId = Number(rec?.id);
       if (Number.isFinite(recId)) rowIndexMap.set(recId, r + 1);
@@ -415,7 +472,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       if (rows > 0) {
         const matrix: any[] = [];
         for (let i = 0; i < items.length; i++) {
-          const obj = await buildRowCells(items[i], me);
+          let obj = await buildRowCells(items[i], me);
+          // Нормализуем числовые значения
+          obj = normalizeRowCellsNumericValues(obj);
           const rowArr = Array.from({ length: 28 }, (_, col) => {
             const c = (obj as any)[col];
             return c ? { v: c.v ?? '', s: c.s ?? (col === 27 ? 'id' : 'ar') } : { v: '', s: col === 27 ? 'id' : 'ar' };
