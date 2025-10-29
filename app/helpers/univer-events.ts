@@ -182,8 +182,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
       if (dateCols.has(i)) {
         return normalizeDateInput(rowVals[i]) ?? "";
       } else if (NUMERIC_COLS.has(i)) {
-        return normalizeNumberStr(toStr(rowVals[i]));
-      } else return toStr(rowVals[i])
+        const normalized = normalizeNumberStr(toStr(rowVals[i]));
+        console.log(`[buildSR] col ${i}: ${toStr(rowVals[i])} -> ${normalized}`);
+        return normalized;
+      } else return toStr(rowVals[i]);
     };
 
     return {
@@ -434,119 +436,156 @@ export function registerUniverEvents(univerAPI: FUniver) {
   };
 
   // ====== Вставка: до / после ======
-  const normalizeNumberStr = (raw: any): string =>
-    (raw ?? "").toString().replace(/\s+/g, "").replace(",", ".");
+  const normalizeNumberStr = (raw: any): string => {
+  if (raw == null || raw === "") return "";
+  
+  let str = String(raw).trim();
+  
+  console.log(`[normalizeNumberStr] input: "${str}"`);
+  
+  // Удаляем ВСЕ пробелы
+  str = str.replace(/\s+/g, "");
+  
+  // Случай 1: число с разделителями тысяч (91,647,936)
+  if (str.includes(",") && !str.includes(".")) {
+    // Проверяем, является ли это числом с разделителями тысяч
+    const parts = str.split(",");
+    const lastPart = parts[parts.length - 1];
+    
+    // Если последняя часть имеет 3 цифры, а предыдущие тоже по 3 цифры - это разделители тысяч
+    const allPartsHaveThreeDigits = parts.every(part => part.length === 3) || 
+                                   (parts[0].length <= 3 && parts.slice(1).every(part => part.length === 3));
+    
+    if (parts.length > 1 && allPartsHaveThreeDigits) {
+      // Это число с разделителями тысяч - удаляем все запятые
+      str = str.replace(/,/g, "");
+      console.log(`[normalizeNumberStr] detected thousand separators: "${str}"`);
+    } else {
+      // Это число с десятичной запятой - заменяем на точку
+      str = str.replace(/,/g, ".");
+    }
+  }
+  // Случай 2: число с десятичной запятой (9164,7936)
+  else if (str.includes(",") && !str.includes(".")) {
+    str = str.replace(/,/g, ".");
+  }
+  // Случай 3: смешанный формат (1,234.56) - удаляем запятые (разделители тысяч)
+  else if (str.includes(",") && str.includes(".")) {
+    str = str.replace(/,/g, "");
+  }
+  
+  console.log(`[normalizeNumberStr] after cleanup: "${str}"`);
+  
+  // Пропускаем уже отформатированные числа и специальные значения
+  if (str.startsWith("#") || str === "") return str;
+  
+  // Пробуем преобразовать в число
+  const num = parseFloat(str);
+  if (!Number.isFinite(num)) {
+    console.log(`[normalizeNumberStr] not a finite number: "${str}"`);
+    return str;
+  }
+  
+  // Округляем до сотых и возвращаем как строку
+  const rounded = Math.round(num * 100) / 100;
+  const result = String(rounded);
+  
+  console.log(`[normalizeNumberStr] result: ${num} -> ${result}`);
+  return result;
+};
 
   const offBeforePaste = univerAPI.addEvent(
-    univerAPI.Event.BeforeClipboardPaste,
-    async (params: any) => {
-      batchPasteInProgress = true;
-      const wb = univerAPI.getActiveWorkbook();
-      const aws = wb?.getActiveSheet();
-      const startCol = aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0;
+  univerAPI.Event.BeforeClipboardPaste,
+  async (params: any) => {
+    batchPasteInProgress = true;
+    
+    console.log("[univer-events] BeforeClipboardPaste raw:", params.text);
+    const wb = univerAPI.getActiveWorkbook();
+    const aws = wb?.getActiveSheet();
+    const startCol = aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0;
 
-      let changed = false;
+    let changed = false;
 
-      const norm = (v: any, c: number) => {
-        const absoluteCol = startCol + c 
+    const norm = (v: any, c: number) => {
+      const absoluteCol = startCol + c;
 
-        if (dateCols.has(absoluteCol)) {
-          return normalizeDateInput(v) ?? v 
-        } else if (NUMERIC_COLS.has(absoluteCol)) {
-          return normalizeNumberStr(v)
-        } else return v
-      }
-        
-
-      if (typeof (params as any)?.text === "string") {
-        const rows = ((params as any).text as string).split(/\r?\n/);
-        const next = rows
-          .map((line) =>
-            !line
-              ? line
-              : line
-                .split("\t")
-                .map((cell, i) => {
-                  const nv = norm(cell, i);
-                  if (nv !== cell) changed = true;
-                  return nv;
-                })
-                .join("\t")
-          )
-          .join("\n");
-        if (next !== (params as any).text) {
-          (params as any).text = next;
+      if (dateCols.has(absoluteCol)) {
+        return normalizeDateInput(v) ?? v;
+      } else if (NUMERIC_COLS.has(absoluteCol)) {
+        const normalized = normalizeNumberStr(v);
+        // Логируем для отладки
+        if (normalized !== v) {
+          console.log(`[BeforePaste normalize] "${v}" -> "${normalized}" (col: ${absoluteCol})`);
           changed = true;
         }
-      }
+        return normalized;
+      } else return v;
+    };
 
-      if (typeof (params as any)?.html === "string") {
-        const prev = (params as any).html as string;
-
-        let next = prev.replace(
-          /\b(\d{2})\.(\d{2})\.(\d{4})\b/g,
-          (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`
-        );
-
-        next = next.replace(
-          /(\d+),(\d+)/g, 
-          (_m, int, dec) => `${int}.${dec}`
+    // Обработка plain text
+    if (typeof (params as any)?.text === "string") {
+      const rows = ((params as any).text as string).split(/\r?\n/);
+      const next = rows
+        .map((line) =>
+          !line
+            ? line
+            : line
+              .split("\t")
+              .map((cell, i) => norm(cell, i))
+              .join("\t")
         )
-
-        if (next !== prev) {
-          (params as any).html = next;
-          changed = true;
-        }
+        .join("\n");
+      if (next !== (params as any).text) {
+        (params as any).text = next;
+        changed = true;
       }
-
-      const data = (params as any)?.data ?? (params as any)?.clipboardData;
-      if (data) {
-        if (typeof data.html === "string") {
-          const prev = data.html as string;
-          let next = prev.replace(
-            /\b(\d{2})\.(\d{2})\.(\d{4})\b/g,
-            (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`
-          );
-
-          next = next.replace(
-            /(\d+),(\d+)/g, 
-            (_m, int, dec) => `${int}.${dec}`
-          );
-
-          if (next !== prev) {
-            data.html = next;
-            changed = true;
-          }
-        }
-
-        if (Array.isArray(data.cells)) {
-          data.cells = data.cells.map((row: any[]) =>
-            Array.isArray(row)
-              ? row.map((cell: any, i: number) => {
-                const nv = norm(cell, startCol + i);
-                if (nv !== cell) changed = true;
-                return nv;
-              })
-              : row
-          );
-        }
-      }
-
-      if (Array.isArray((params as any)?.cells)) {
-        (params as any).cells = (params as any).cells.map((row: any[]) =>
-          Array.isArray(row)
-            ? row.map((cell: any, i: number) => {
-              const nv = norm(cell, startCol + i);
-              if (nv !== cell) changed = true;
-              return nv;
-            })
-            : row
-        );
-      }
-      if (changed)
-        console.log("[univer-events] BeforeClipboardPaste: normalized");
     }
-  );
+
+    // Обработка HTML - полностью переписываем логику
+    if (typeof (params as any)?.html === "string") {
+      const prev = (params as any).html as string;
+      
+      // Создаем временный элемент для парсинга HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = prev;
+      
+      // Обрабатываем все текстовые узлы
+      const processNode = (node: Node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const text = node.textContent || '';
+          // Разбиваем на ячейки (табуляция) и строки (переносы)
+          const rows = text.split(/\r?\n/);
+          const processedRows = rows.map(row => 
+            row.split('\t').map(cell => {
+              // Проверяем, является ли ячейка числом в числовой колонке
+              const absoluteCol = startCol; // Упрощенно - для точности нужно отслеживать индекс
+              if (NUMERIC_COLS.has(absoluteCol)) {
+                return normalizeNumberStr(cell);
+              }
+              return cell;
+            }).join('\t')
+          ).join('\n');
+          node.textContent = processedRows;
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          Array.from(node.childNodes).forEach(processNode);
+        }
+      };
+      
+      Array.from(tempDiv.childNodes).forEach(processNode);
+      
+      const next = tempDiv.innerHTML;
+      if (next !== prev) {
+        (params as any).html = next;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      console.log("[univer-events] BeforeClipboardPaste: normalized");
+      console.log("Final text:", (params as any).text);
+    }
+  }
+);
 
   const offPasted = univerAPI.addEvent(
     univerAPI.Event.ClipboardPasted,
@@ -576,6 +615,28 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
         console.log(`Paste range: rows ${startRow}-${endRow}, cols ${startCol}-${endCol}`);
 
+        try {
+          univerStore.beginQuiet?.();
+          for (let r = startRow; r <= endRow; r++) {
+            for (let c = startCol; c <= endCol; c++) {
+              if (!NUMERIC_COLS.has(c)) continue;
+
+              const currentValue = aws.getRange(r, c).getValue();
+              const normalized = normalizeNumberStr(currentValue?.v ?? currentValue);
+
+              // Если значение изменилось при нормализации, обновляем UI
+              if (normalized !== String(currentValue?.v ?? currentValue)) {
+                console.log(`[UI update] row ${r}, col ${c}: ${currentValue?.v ?? currentValue} -> ${normalized}`);
+                aws.getRange(r, c).setValue({ v: normalized });
+              }
+            }
+          }
+        } catch (e) {
+          console.error("UI update error:", e);
+        } finally {
+          univerStore.endQuiet?.();
+        }
+
         if (me?.roleCode === "ROLE_MANAGER") {
           for (let r = startRow; r <= endRow; r++) {
             let locked = false;
@@ -596,16 +657,16 @@ export function registerUniverEvents(univerAPI: FUniver) {
         const updateDtos: any[] = [];
 
         try {
-          univerStore.beginQuiet?.() 
+          univerStore.beginQuiet?.()
           for (let r = startRow; r <= endRow; r++) {
             for (let c = startCol; c <= endCol; c++) {
-              if (c === 27) continue 
+              if (c === 27) continue
 
-              const currentValue = aws.getRange(r, c).getValue() 
+              const currentValue = aws.getRange(r, c).getValue()
               aws.getRange(r, c).setValue({
                 v: currentValue?.v ?? currentValue,
               })
-              .clearFormat()
+                .clearFormat()
             }
           }
         } catch (e) {
@@ -613,7 +674,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         } finally {
           univerStore.endQuiet?.()
         }
-        
+
         for (let r = startRow; r <= endRow; r++) {
           const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
 
@@ -652,23 +713,23 @@ export function registerUniverEvents(univerAPI: FUniver) {
         console.log('createDtos: ', createDtos)
 
         if (createDtos.length > 0) {
-          await rpcClient.call('batchRecords', {
-            type: 'create',
-            listName,
-            records: createDtos,
-            token,
-            kingsApiBase: kingsApiBase
-          })
+          // await rpcClient.call('batchRecords', {
+          //   type: 'create',
+          //   listName,
+          //   records: createDtos,
+          //   token,
+          //   kingsApiBase: kingsApiBase
+          // })
         }
 
         if (updateDtos.length > 0) {
-          await rpcClient.call('batchRecords', {
-            type: 'update',
-            listName,
-            records: updateDtos,
-            token,
-            kingsApiBase: kingsApiBase
-          })
+          // await rpcClient.call('batchRecords', {
+          //   type: 'update',
+          //   listName,
+          //   records: updateDtos,
+          //   token,
+          //   kingsApiBase: kingsApiBase
+          // })
         }
 
         if (me?.roleCode === 'ROLE_MANAGER') {
@@ -708,7 +769,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     'sheet.command.paste-all',
   ]);
 
-  let timeoutId: NodeJS.Timeout 
+  let timeoutId: NodeJS.Timeout
   const debounceCheckKPP = (dataStream: string, column: number, row: number, worksheet: any) => {
     clearTimeout(timeoutId)
     timeoutId = setTimeout(async () => {
@@ -728,7 +789,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
             icon: 'i-lucide-x',
             color: 'error'
           });
-      } else {
+        } else {
           toast.add({
             title: 'ИНН подрядчика не найден',
             icon: 'i-lucide-x',
@@ -738,13 +799,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
       } else {
         const suggestions = result.suggestions[0]
         const companyName = suggestions.value.replace(/"/g, '')
-        const inn = suggestions.data.inn 
+        const inn = suggestions.data.inn
         const kpp = suggestions.data.kpp
 
         const newValue = `${companyName} ИНН ${inn}`
 
         try {
-          univerStore.beginQuiet?.() 
+          univerStore.beginQuiet?.()
           worksheet.getRange(row, column).setValue({ v: newValue })
         } catch (e) {
           console.error(e)
@@ -753,17 +814,17 @@ export function registerUniverEvents(univerAPI: FUniver) {
         }
       }
     } catch (error) {
-        console.error('Error checking KPP:', error);
+      console.error('Error checking KPP:', error);
     }
   };
 
   const offEditChanging = univerAPI.addEvent(univerAPI.Event.SheetEditChanging, async (params: any) => {
     if (params.column === 7 || params.column === 13) {
-      const dataStream = params.value._data.body.dataStream 
+      const dataStream = params.value._data.body.dataStream
 
-      if (dataStream)  {
-        const ws = params.worksheet 
-        const row = params.row 
+      if (dataStream) {
+        const ws = params.worksheet
+        const row = params.row
         const column = params.column
 
         debounceCheckKPP(dataStream, column, row, ws)
@@ -772,8 +833,12 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
     if (NUMERIC_COLS.has(params.column)) {
       const dataStream = params.value._data.body.dataStream
-      if (dataStream && dataStream.includes(',')) {
-        params.value._data.body.dataStream = dataStream.replace(/,/g, '.')
+      if (dataStream) {
+        const normalized = normalizeNumberStr(dataStream)
+        if (normalized !== dataStream) {
+          params.value._data.body.dataStream = normalized
+          console.log(`[edit-changing] normalized ${dataStream} to ${normalized}`)
+        }
       }
     }
   })
@@ -947,7 +1012,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
           const allowed = new Set<number>();
           for (const col0 of cols) {
             if (!NUMERIC_COLS.has(col0)) continue;
-            const v = cv[String(row0)]?.[String(col0)]?.v 
+            const v = cv[String(row0)]?.[String(col0)]?.v
             if (typeof v === 'string' && v.includes(',')) {
               const normalized = normalizeNumberStr(v)
               ws.getRange(row0, col0).setValue({ v: normalized });
@@ -975,11 +1040,24 @@ export function registerUniverEvents(univerAPI: FUniver) {
         let invalid = false;
         for (const [row0, cols] of perRow) {
           for (const col0 of cols) {
-            if (!NUMERIC_COLS.has(col0)) continue;
-            const v = cv[String(row0)]?.[String(col0)]?.v;
-            if (!isNumericOrEmpty(v)) { invalid = true; break; }
+            if (NUMERIC_COLS.has(col0)) {
+              const currentValue = ws.getRange(row0, col0).getValue();
+              const normalized = normalizeNumberStr(currentValue?.v ?? currentValue);
+
+              // Если значение изменилось при нормализации, обновляем UI
+              if (normalized !== String(currentValue?.v ?? currentValue)) {
+                try {
+                  univerStore.beginQuiet?.();
+                  ws.getRange(row0, col0).setValue({ v: normalized });
+                } finally {
+                  univerStore.endQuiet?.();
+                }
+
+                // Обновляем значение в cv для корректного DTO
+                (cv[String(row0)] ??= {})[String(col0)] = { v: normalized };
+              }
+            }
           }
-          if (invalid) break;
         }
         if (invalid) {
           try { univerStore.beginQuiet?.(); } catch { }
@@ -1106,22 +1184,22 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
         // ВЫЗОВ ВОРКЕРА ДЛЯ ПАКЕТНОЙ ОБРАБОТКИ
         if (updateDtos.length) {
-          await rpcClient.call('batchRecords', {
-            type: 'update',
-            listName,
-            records: updateDtos,
-            token,
-            kingsApiBase: kingsApiBase
-          });
+          // await rpcClient.call('batchRecords', {
+          //   type: 'update',
+          //   listName,
+          //   records: updateDtos,
+          //   token,
+          //   kingsApiBase: kingsApiBase
+          // });
         }
         if (createDtos.length) {
-          await rpcClient.call('batchRecords', {
-            type: 'create',
-            listName,
-            records: createDtos,
-            token,
-            kingsApiBase: kingsApiBase
-          });
+          // await rpcClient.call('batchRecords', {
+          //   type: 'create',
+          //   listName,
+          //   records: createDtos,
+          //   token,
+          //   kingsApiBase: kingsApiBase
+          // });
         }
 
         for (const r of createdRows) await paintManagerLockedColsOnRow(ws, r);
@@ -1147,7 +1225,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const me = getUser()
 
     if (me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH') return
-    
+
     const toast = useToast()
 
     if (endRow - startRow >= 10) {
@@ -1159,7 +1237,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       })
       params.text = ''
       params.html = ''
-      
+
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText('')
