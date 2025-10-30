@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white dark:bg-zinc-900 z-50">
+  <div class="bg-white/0 dark:bg-zinc-900/40 z-50">
     <div class="v-row items-center gap-2 p-4">
       <!-- Кнопка ТОЛЬКО она открывает слайдовер -->
       <UButton

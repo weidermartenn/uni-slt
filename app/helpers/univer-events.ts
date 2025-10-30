@@ -27,6 +27,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const NUMERIC_COLS = new Set([9, 16, 17, 24, 25, 26]);
 
   // ====== Helpers ======
+
   const unwrapV = (x: any): any =>
     x && typeof x === "object" && "v" in x ? unwrapV(x.v) : x;
 
@@ -440,6 +441,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const offBeforePaste = univerAPI.addEvent(
     univerAPI.Event.BeforeClipboardPaste,
     async (params: any) => {
+      console.log("[univer-events] offBeforePaste");
       batchPasteInProgress = true;
       const wb = univerAPI.getActiveWorkbook();
       const aws = wb?.getActiveSheet();
@@ -759,6 +761,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   const offEditChanging = univerAPI.addEvent(univerAPI.Event.SheetEditChanging, async (params: any) => {
     if (params.column === 7 || params.column === 13) {
+      console.log('[univer-events] SheetEditChanging')
       const dataStream = params.value._data.body.dataStream 
 
       if (dataStream)  {
@@ -972,36 +975,122 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       // Валидация числовых колонок
       {
-        let invalid = false;
+        const getOld = (rec: TransportAccounting, col0: number) =>
+          (rec as any)?.[COL_TO_KEY[col0] as keyof TransportAccounting];
+
+        const isValidDate = (value: any): boolean => {
+          if (!value) return true 
+          const strValue = String(value).trim();
+          if (!strValue) return true 
+
+          const dateFormats = [
+            /^\d{4}-\d{2}-\d{2}$/, 
+            /^\d{2}\.\d{2}\.\d{4}&/
+          ]
+
+          if (dateFormats.some(format => format.test(strValue))) {
+            const date = new Date(strValue)
+            return !isNaN(date.getTime())
+          }
+
+          if (/^\d+(\.\d+)?$/.test(strValue)) {
+            const num = Number(strValue)
+            if (num >= 25569) {
+              return true
+            }
+          }
+
+          return false
+        };
+
+        let hasInvalidData = false 
+        const invalidCells: Array<{row0: number, col0: number, hadPreviousData: boolean}> = []
+
         for (const [row0, cols] of perRow) {
           for (const col0 of cols) {
-            if (!NUMERIC_COLS.has(col0)) continue;
-            const v = cv[String(row0)]?.[String(col0)]?.v;
-            if (!isNumericOrEmpty(v)) { invalid = true; break; }
-          }
-          if (invalid) break;
-        }
-        if (invalid) {
-          try { univerStore.beginQuiet?.(); } catch { }
-          try {
-            for (const [row0, cols] of perRow) {
-              for (const col0 of cols) {
-                if (!NUMERIC_COLS.has(col0)) continue;
-                ws.getRange(row0, col0).setValue({ v: '' });
+            const newValue = cv[String(row0)]?.[String(col0)]?.v 
+            const stringValue = String(newValue ?? '').trim() 
+
+            if (NUMERIC_COLS.has(col0) && stringValue !== '') {
+              if (!isNumericOrEmpty(newValue)) {
+                const prevRec = Array.isArray(store.records[listName]) ? store.records[listName][row0 - 1] : undefined 
+                const prevValue = prevRec ? getOld(prevRec, col0) : null
+                const hadPreviousData = prevValue !== null && prevValue !== undefined && String(prevValue).trim() !== '' 
+
+                invalidCells.push({ row0, col0, hadPreviousData })
+                hasInvalidData = true
               }
             }
-          } finally { try { univerStore.endQuiet?.(); } catch { } }
-          try {
-            useToast().add({
-              title: 'Только числа',
-              description: 'В числовую колонку внесено текстовое значение или ошибка.',
-              color: 'warning',
-              icon: 'i-lucide-alert-triangle',
-              duration: 3000,
-            });
-          } catch { }
-          return;
+
+            if (dateCols.has(col0) && stringValue !== '') {
+              if (!isValidDate(newValue)) {
+                const prevRec = Array.isArray(store.records[listName]) ? store.records[listName][row0 - 1] : undefined 
+                const prevValue = prevRec ? getOld(prevRec, col0) : null
+                const hadPreviousData = prevValue !== null && prevValue !== undefined && String(prevValue).trim() !== '' 
+
+                invalidCells.push({ row0, col0, hadPreviousData })
+                hasInvalidData = true
+              }
+            }
+          }
         }
+
+        if (hasInvalidData) {
+          try {
+            univerStore.beginQuiet?.()
+          } catch { }
+
+          try {
+            const cellsWithPreviousData = invalidCells.filter(c => c.hadPreviousData)
+            const cellsWithoutData = invalidCells.filter(c => !c.hadPreviousData)
+
+            if (cellsWithPreviousData.length > 0) {
+              const numericInvalid = cellsWithPreviousData.filter(c => NUMERIC_COLS.has(c.col0))
+              const dateInvalid = cellsWithPreviousData.filter(c => dateCols.has(c.col0))
+
+              univerAPI.undo() 
+
+              let errorMessage = 'Обнаружены неверные данные' 
+              if (numericInvalid.length > 0) {
+                errorMessage += ` в числовых колонках (строки: ${[...new Set(numericInvalid.map(cell => cell.row0 + 1))].join(', ')});`; 
+              }
+              if (dateInvalid.length > 0) {
+                errorMessage += ` в колонках с датами (строки: ${[...new Set(dateInvalid.map(cell => cell.row0 + 1))].join(', ')});`; 
+              }
+              errorMessage += ' Изменения отменены.'
+
+              useToast().add({
+                title: 'Неверный формат данных',
+                description: errorMessage,
+                color: 'error',
+                icon: 'i-lucide-alert-triangle',
+                duration: 4000
+              })
+            }
+
+            if (cellsWithoutData.length > 0) {
+              for (const { row0, col0 } of cellsWithoutData) {
+                ws.getRange(row0, col0).setValue({ v: '' });
+              }
+              
+              useToast().add({
+                title: 'Неверный формат данных',
+                description: 'Введены неверные данные в пустые ячейки. Ячейки очищены.',
+                color: 'warning',
+                icon: 'i-lucide-info',
+                duration: 3000,
+              });
+            }
+          } finally {
+            try {
+              univerStore.endQuiet?.()
+            } catch { }
+          }
+
+          if (invalidCells.some(cell => cell.hadPreviousData)) {
+            return
+          }
+        } 
       }
 
       // Список строк для обработки
@@ -1140,7 +1229,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const startRow = params.fromRange._range.startRow
     const endRow = params.fromRange._range.endRow
 
-    console.log(params)
+    console.log('[univer-events] ClipboardChanged')
 
     if (!startRow || !endRow) return
 
