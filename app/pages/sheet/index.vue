@@ -16,7 +16,48 @@
         </UButton>
       </div>
 
-      <div id="univer" class="w-full h-full"></div>
+      <!-- Состояние загрузки -->
+      <div v-if="loading" class="w-full h-full v-col justify-center items-center">
+        <div class="text-center font-medium text-xl v-col justify-center items-center">
+          <UIcon name="i-lucide-loader-2" class="h-8 w-8 animate-spin text-gray-900 mx-auto mb-4" />
+          <span>Загрузка данных...</span>
+        </div>
+      </div>
+
+      <!-- Состояние ошибки -->
+      <div v-else-if="error" class="w-full h-full v-col justify-center items-center">
+        <div class="text-center font-medium text-xl v-col justify-center items-center">
+          <UIcon name="i-lucide-alert-circle" class="h-16 w-16 text-gray-400 mx-auto mb-4" />
+          <span>Ошибка загрузки данных<br>Проверьте подключение к интернету</span>
+          <UButton
+            variant="outline"
+            class="mt-4 border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400"
+            @click="retryLoadData"
+          >
+            <UIcon name="i-lucide-refresh-ccw" class="h-4 w-4 mr-2" />
+            Попробовать снова
+          </UButton>
+        </div>
+      </div>
+
+      <!-- Состояние "нет данных" -->
+      <div v-else-if="!hasRecords" class="w-full h-full v-col justify-center items-center">
+        <div class="text-center font-medium text-xl v-col justify-center items-center">
+          <img src="assets/without-connect.png" class="h-40 w-40">
+          <span>Нет данных для отображения ТУ</span>
+        </div>
+      </div>
+      
+      <!-- Успешная загрузка с данными -->
+      <div v-else id="univer" class="w-full h-full"></div>
+
+      <!-- Сообщение о долгой загрузке -->
+      <div v-if="showLongLoadMessage && loading" class="fixed bottom-4 right-4 p-4 bg-orange-100 border border-orange-300 rounded-lg">
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-info" class="h-5 w-5 text-orange-600" />
+          <span class="text-sm text-orange-800">Загрузка занимает больше времени чем обычно...</span>
+        </div>
+      </div>
     </div>
   </UApp>
 </template>
@@ -27,7 +68,6 @@ import { useToast } from '#imports'
 import { useEmployeeStore } from '~/stores/employee-store'
 import { useSheetStore } from '~/stores/sheet-store'
 import { useUniverStore } from '~/stores/univer-store'
-import { checkKPP } from './chechKPP'
 
 definePageMeta({ ssr: false })
 useHead({ title: 'СЛТ Транспортный учет' })
@@ -39,6 +79,11 @@ const records = ref<Record<string, any[]>>({})
 const DELETE_CONFIRM_TIMEOUT = 5000
 const LONG_LOAD_TIMEOUT = 7000
 
+// Состояния загрузки
+const loading = ref(true)
+const error = ref(false)
+const hasRecords = ref(false)
+
 const deleteState = reactive({
   pending: false,
   rows: [] as number[],
@@ -49,6 +94,57 @@ const univerStore = useUniverStore()
 const showBusy = ref(false)
 const showLongLoadMessage = ref(false)
 let longLoadTimeout: NodeJS.Timeout | null = null
+
+// Проверка наличия данных
+const checkRecords = () => {
+  const store = useSheetStore()
+  const recordsData = store.records
+  
+  // Проверяем, что records - объект и в нем есть хотя бы один непустой массив
+  if (recordsData && typeof recordsData === 'object') {
+    const hasData = Object.values(recordsData).some(arr => 
+      Array.isArray(arr) && arr.length > 0
+    )
+    hasRecords.value = hasData
+  } else {
+    hasRecords.value = false
+  }
+}
+
+// Повторная загрузка данных
+const retryLoadData = async () => {
+  loading.value = true
+  error.value = false
+  await loadData()
+}
+
+// Основная функция загрузки данных
+const loadData = async () => {
+  try {
+    const store = useSheetStore()
+    const employeeStore = useEmployeeStore()
+
+    // Сбрасываем состояния
+    loading.value = true
+    error.value = false
+    
+    // Загружаем данные
+    await Promise.all([
+      store.fetchRecords(),
+      employeeStore.fetchEmployees()
+    ])
+    
+    records.value = store.records
+    checkRecords()
+    
+  } catch (err) {
+    console.error('Ошибка загрузки данных:', err)
+    error.value = true
+    hasRecords.value = false
+  } finally {
+    loading.value = false
+  }
+}
 
 function getSelectionData() {
   const wb = api.value?.getActiveWorkbook?.()
@@ -180,55 +276,60 @@ async function onDeleteClick() {
 onMounted(async () => {
   const { initUniver } = await import('~/composables/initUniver')
   const { getLifeCycleState } = await import('~/composables/lifecycle')
-  const store = useSheetStore()
-  const employeeStore = useEmployeeStore()
 
   univerStore.setUiLoading(true)
 
   longLoadTimeout = setTimeout(() => {
-    if (univerStore.uiLoading) showLongLoadMessage.value = true
+    if (loading.value) showLongLoadMessage.value = true
   }, LONG_LOAD_TIMEOUT)
 
-  await store.fetchRecords()
-  await employeeStore.fetchEmployees()
-  records.value = store.records
+  // Загружаем данные
+  await loadData()
 
-  api.value = await initUniver(records.value)
+  // Инициализируем Univer только если есть данные
+  if (hasRecords.value) {
+    try {
+      api.value = await initUniver(records.value)
 
-  try {
-    const { useTheme } = await import('~/composables/useTheme')
-    const { darkTheme } = useTheme()
-    api.value?.toggleDarkMode?.(darkTheme.value)
-  } catch {}
+      try {
+        const { useTheme } = await import('~/composables/useTheme')
+        const { darkTheme } = useTheme()
+        api.value?.toggleDarkMode?.(darkTheme.value)
+      } catch {}
 
-  const { rendered } = getLifeCycleState(api.value!)
-  const fontsReady = ref(false)
+      const { rendered } = getLifeCycleState(api.value!)
+      const fontsReady = ref(false)
 
-  if (typeof document !== 'undefined' && 'fonts' in document) {
-    ;(document as any).fonts.ready.then(() => {
-      fontsReady.value = true
-    }).catch(() => {
-      fontsReady.value = true
-    })
-  } else {
-    fontsReady.value = true
-  }
-
-  const dataLoaded = ref(true)
-    
-  watch([rendered, dataLoaded, fontsReady], ([r, d, f]) => {
-    if (r && d && f) {
-      univerStore.setUiLoading(false)
-      univerStore.setUiReady(true)
-      if (longLoadTimeout) {
-        clearTimeout(longLoadTimeout)
-        longLoadTimeout = null
+      if (typeof document !== 'undefined' && 'fonts' in document) {
+        ;(document as any).fonts.ready.then(() => {
+          fontsReady.value = true
+        }).catch(() => {
+          fontsReady.value = true
+        })
+      } else {
+        fontsReady.value = true
       }
-      showLongLoadMessage.value = false
-    } else {
-      univerStore.setUiLoading(true)
+
+      const dataLoaded = ref(true)
+        
+      watch([rendered, dataLoaded, fontsReady], ([r, d, f]) => {
+        if (r && d && f) {
+          univerStore.setUiLoading(false)
+          univerStore.setUiReady(true)
+          if (longLoadTimeout) {
+            clearTimeout(longLoadTimeout)
+            longLoadTimeout = null
+          }
+          showLongLoadMessage.value = false
+        } else {
+          univerStore.setUiLoading(true)
+        }
+      }, { immediate: true })
+    } catch (err) {
+      console.error('Ошибка инициализации Univer:', err)
+      error.value = true
     }
-  }, { immediate: true })
+  }
 
   onBeforeUnmount(() => {
     if (longLoadTimeout) {
