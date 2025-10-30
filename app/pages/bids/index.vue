@@ -1,9 +1,7 @@
 <template>
   <div>
-<<<<<<< HEAD
     <!-- Контейнер для Univer -->
     <div id="app" class="univer-container"></div>
-=======
     <!-- Состояние загрузки -->
     <div v-if="isLoading" class="loading">
       Инициализация Univer Doc...
@@ -19,21 +17,14 @@
       <!-- Контейнер для Univer -->
       <div id="app" class="univer-container"></div>
     </div>
->>>>>>> bids-agreements
   </div>
 </template>
 
 <script setup lang="ts">
-<<<<<<< HEAD
-// Импорт стилей (порядок важен)
-=======
 // Импорт стилей
->>>>>>> bids-agreements
 import '@univerjs/design/lib/index.css';
 import '@univerjs/ui/lib/index.css';
 import '@univerjs/docs-ui/lib/index.css';
-
-<<<<<<< HEAD
 // Импорт ядра и фасада
 import { LocaleType, mergeLocales, Univer, UniverInstanceType } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade'; // Facade API
@@ -111,11 +102,10 @@ function initializeUniver() {
 
   console.log('Univer Doc инициализирован через Facade API');
 }
-=======
+
 const {
   initialize,
   dispose,
-  univerInstance,
   isInitialized,
   isLoading,
   error,
@@ -152,15 +142,12 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   dispose();
 });
->>>>>>> bids-agreements
 </script>
 
 <style scoped>
 .univer-container {
   width: 100%;
-<<<<<<< HEAD
   height: 90vh; /* Используем высоту из вашего класса h-[90vh] */
-=======
   height: 90vh;
 }
 
@@ -184,6 +171,5 @@ onBeforeUnmount(() => {
   padding: 20px;
   border-radius: 8px;
   margin: 20px;
->>>>>>> bids-agreements
 }
 </style>

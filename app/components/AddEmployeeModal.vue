@@ -15,7 +15,7 @@
     <template #body>
       <UCard class="p-4">
         <!-- Основные данные -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
           <UInput
             v-model="form.fullName"
             placeholder="ФИО"
@@ -28,21 +28,24 @@
           />
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
           <UInput
             v-model="form.phone"
-            placeholder="Номер телефона"
+            placeholder="+7 (***) ***-**-**"
+            v-maska="'+7 (###) ###-##-##'"
           />
           <UInput
             v-model="form.email"
             placeholder="Электронная почта"
             type="email"
+            :error="emailError"
+            @input="onEmailInput"
+            @blur="validateEmail"
           />
         </div>
 
         <!-- Роль и статус -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-          <!-- заменено USelectMenu -> USelect -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end mb-2">
           <USelect
             v-model="form.roleCode"
             :items="roleOptions"
@@ -148,9 +151,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue';
+import { ref, reactive, watch, computed } from 'vue';
 import { useEmployeeStore } from '~/stores/employee-store';
 import { useToast } from '#imports';
+import { vMaska } from 'maska/vue';
 
 const props = defineProps({
   open: { type: Boolean, default: false }
@@ -165,6 +169,9 @@ const aeiStore = useEmployeeStore();
 const toast = useToast();
 
 const saving = ref(false);
+
+// Дебаунс таймер
+let emailTimeout = ref<NodeJS.Timeout | null>(null);
 
 const defaultEmployee = () => ({
   birthdayDate: null,
@@ -198,12 +205,48 @@ const form = reactive({
   roleCode: null as string | null,
 });
 
-// роли: Менеджер, Бухгалтер, Администратор (в указанном порядке)
-const roleOptions = [
-  { label: 'Менеджер', value: 'ROLE_MANAGER' },
-  { label: 'Бухгалтер', value: 'ROLE_BUH' },
-  { label: 'Администратор', value: 'ROLE_ADMIN' },
-];
+// Валидация email
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Состояние ошибки email
+const emailError = ref('');
+
+// Computed свойство для проверки валидности email
+const isEmailValid = computed(() => {
+  if (!form.email) return true; // Пустое поле - валидно
+  return emailRegex.test(form.email);
+});
+
+// Дебаунс проверка email
+const onEmailInput = () => {
+  // Очищаем предыдущий таймер
+  if (emailTimeout.value) {
+    clearTimeout(emailTimeout.value);
+  }
+  
+  // Устанавливаем новый таймер с задержкой 500ms
+  emailTimeout.value = setTimeout(() => {
+    validateEmail();
+  }, 500);
+};
+
+// Валидация email
+const validateEmail = () => {
+  if (form.email && !isEmailValid.value) {
+    emailError.value = 'Введите корректный email адрес';
+    return false;
+  } else {
+    emailError.value = '';
+    return true;
+  }
+};
+
+// Очистка таймера при уничтожении компонента
+onUnmounted(() => {
+  if (emailTimeout.value) {
+    clearTimeout(emailTimeout.value);
+  }
+});
 
 const errors = reactive({
   fullName: '',
@@ -217,12 +260,13 @@ function resetForm() {
   form.password = '';
   form.phone = '';
   form.email = '';
-  form.confirmed = true;
+  form.confirmed = false;
   form.confirmedNotification = true;
   form.employee = defaultEmployee();
   form.roleCode = null;
   errors.fullName = '';
   errors.login = '';
+  emailError.value = '';
 }
 
 function validate() {
@@ -236,6 +280,11 @@ function validate() {
   }
   if (!form.login || String(form.login).trim().length < 2) {
     errors.login = 'Нужен логин';
+    ok = false;
+  }
+  // Проверяем email только если он заполнен
+  if (form.email && !isEmailValid.value) {
+    emailError.value = 'Введите корректный email адрес';
     ok = false;
   }
 
@@ -254,7 +303,7 @@ async function onSubmit() {
       atiId: form.atiId || 0,
       chatId: form.chatId || 0,
       confirmToken: form.confirmToken || null,
-      confirmed: !!form.confirmed,
+      confirmed: false,
       confirmedNotification: !!form.confirmedNotification,
       driver: null,
       email: form.email || null,
@@ -279,8 +328,8 @@ async function onSubmit() {
       role: form.roleCode ? { code: form.roleCode } : null,
     };
 
-    // вызываем метод стора — убедитесь что addEmployee реализован в store
-    await aeiStore.addEmployee(payload);
+    console.log('payload', JSON.stringify(payload, null, 2));
+    // await aeiStore.addEmployee(payload);
 
     toast.add({ title: 'Сотрудник добавлен', color: 'success', icon: 'i-lucide-check' });
 
@@ -300,6 +349,12 @@ function onCancel() {
   isOpen.value = false;
   resetForm();
 }
+
+const roleOptions = [
+  { label: 'Менеджер', value: 'ROLE_MANAGER' },
+  { label: 'Бухгалтер', value: 'ROLE_BUH' },
+  { label: 'Администратор', value: 'ROLE_ADMIN' },
+];
 </script>
 
 <style scoped>
