@@ -1,16 +1,39 @@
 <template>
   <div>
+<<<<<<< HEAD
     <!-- Контейнер для Univer -->
     <div id="app" class="univer-container"></div>
+=======
+    <!-- Состояние загрузки -->
+    <div v-if="isLoading" class="loading">
+      Инициализация Univer Doc...
+    </div>
+    
+    <!-- Состояние ошибки -->
+    <div v-else-if="error" class="error">
+      Ошибка: {{ error.message }}
+    </div>
+    
+    <!-- Основной контент -->
+    <div v-else>
+      <!-- Контейнер для Univer -->
+      <div id="app" class="univer-container"></div>
+    </div>
+>>>>>>> bids-agreements
   </div>
 </template>
 
 <script setup lang="ts">
+<<<<<<< HEAD
 // Импорт стилей (порядок важен)
+=======
+// Импорт стилей
+>>>>>>> bids-agreements
 import '@univerjs/design/lib/index.css';
 import '@univerjs/ui/lib/index.css';
 import '@univerjs/docs-ui/lib/index.css';
 
+<<<<<<< HEAD
 // Импорт ядра и фасада
 import { LocaleType, mergeLocales, Univer, UniverInstanceType } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade'; // Facade API
@@ -88,11 +111,79 @@ function initializeUniver() {
 
   console.log('Univer Doc инициализирован через Facade API');
 }
+=======
+const {
+  initialize,
+  dispose,
+  univerInstance,
+  isInitialized,
+  isLoading,
+  error,
+  getActiveDocument
+} = useUniverDoc();
+
+onMounted(async () => {
+  try {
+    await initialize('app');
+    
+    // Даем время на полную инициализацию UI
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Получаем документ
+    const doc = getActiveDocument();
+    if (!doc) {
+      console.log('Документ не найден');
+      return;
+    }
+    
+    // Добавляем текст с обработкой ошибок
+    try {
+      doc.appendText('Добро пожаловать в Univer!');
+      console.log('Текст успешно добавлен');
+    } catch (err) {
+      console.error('Ошибка добавления текста:', err);
+    }
+    
+  } catch (err) {
+    console.error('Ошибка инициализации Univer Doc:', err);
+  }
+});
+
+onBeforeUnmount(() => {
+  dispose();
+});
+>>>>>>> bids-agreements
 </script>
 
 <style scoped>
 .univer-container {
   width: 100%;
+<<<<<<< HEAD
   height: 90vh; /* Используем высоту из вашего класса h-[90vh] */
+=======
+  height: 90vh;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 90vh;
+  font-size: 18px;
+  color: #666;
+}
+
+.error {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 90vh;
+  font-size: 18px;
+  color: #d32f2f;
+  background-color: #ffebee;
+  padding: 20px;
+  border-radius: 8px;
+  margin: 20px;
+>>>>>>> bids-agreements
 }
 </style>
