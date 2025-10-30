@@ -27,7 +27,7 @@ export async function addDataValidation(api: FUniver, sheet: FWorksheet) {
     return raw.map((e) => {
       const parts = e.split(' ')
       // “Фамилия Имя Отчество” -> “Фамилия Имя”, остальное как есть
-      return parts.length === 3 ? `${parts[0]} ${parts[1]}` : e
+      return parts.length === 3 ? `${parts[0]} ${parts[1]} ${parts[2]}` : e
     })
   })()
 
