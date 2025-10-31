@@ -93,7 +93,9 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     UniverPresetSheetsFilterRuRU,
     { UniverSheetsConditionalFormattingPreset },
     UniverPresetSheetsConditionalFormattingEnUS,
-    UniverPresetSheetsConditionalFormattingRuRU
+    UniverPresetSheetsConditionalFormattingRuRU,
+    { UniverSheetsFindReplacePreset },
+    SheetFindReplaceEnUS, SheetFindReplaceRuRU,
   ] = await Promise.all([
     import('@univerjs/presets'),
     import('@univerjs/preset-sheets-core'),
@@ -108,9 +110,13 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     import('@univerjs/preset-sheets-conditional-formatting'),
     import('@univerjs/preset-sheets-conditional-formatting/locales/en-US'),
     import('@univerjs/preset-sheets-conditional-formatting/locales/ru-RU'),
+    import('@univerjs/preset-sheets-find-replace'),
+    import('@univerjs/preset-sheets-find-replace/locales/en-US'),
+    import('@univerjs/preset-sheets-find-replace/locales/ru-RU'),
   ]);
   await import('@univerjs/preset-sheets-filter/lib/index.css');
   await import('@univerjs/preset-sheets-conditional-formatting/lib/index.css');
+  await import('@univerjs/preset-sheets-find-replace/lib/index.css')
 
   const { univer, univerAPI } = createUniver({
     locale: LocaleType.RU_RU,
@@ -119,13 +125,15 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
         (SheetsCoreEnUS as any).default ?? SheetsCoreEnUS,
         (SheetsDVEnUS as any).default ?? SheetsDVEnUS,
         (UniverPresetSheetsFilterEnUS as any).default ?? UniverPresetSheetsFilterEnUS,
-        (UniverPresetSheetsConditionalFormattingEnUS as any).default ?? UniverPresetSheetsConditionalFormattingEnUS
+        (UniverPresetSheetsConditionalFormattingEnUS as any).default ?? UniverPresetSheetsConditionalFormattingEnUS,
+        (SheetFindReplaceEnUS as any).default ?? SheetFindReplaceEnUS
       ),
       [LocaleType.RU_RU]: mergeLocales(
         (SheetsCoreRuRU as any).default ?? SheetsCoreRuRU,
         (SheetsDVRuRU as any).default ?? SheetsDVRuRU,
         (UniverPresetSheetsFilterRuRU as any).default ?? UniverPresetSheetsFilterRuRU,
-        (UniverPresetSheetsConditionalFormattingRuRU as any).default ?? UniverPresetSheetsConditionalFormattingRuRU
+        (UniverPresetSheetsConditionalFormattingRuRU as any).default ?? UniverPresetSheetsConditionalFormattingRuRU,
+        (SheetFindReplaceRuRU as any).default ?? SheetFindReplaceRuRU
       ),
     },
     presets: [
@@ -146,6 +154,7 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
       UniverSheetsDataValidationPreset(),
       UniverSheetsFilterPreset(),
       UniverSheetsConditionalFormattingPreset(),
+      UniverSheetsFindReplacePreset(),
     ],
   });
 
