@@ -99,7 +99,7 @@ const items: Item[] = [
     id: 1,
     title: "Личный кабинет",
     icon: "i-lucide-user",
-    to: "/",
+    to: "/lk",
     role: "user",
   },
   {

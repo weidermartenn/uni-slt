@@ -19,7 +19,7 @@
       <div class="v-col items-center">
         <h2 class="text-3xl font-extralight">Приветствуем Вас в системе логистической компании</h2>
         <UButton class="bg-white text-black border-none hover:bg-gray-200">
-          <NuxtLink to="/lk#lk">Перейти в личный кабинет</NuxtLink>
+          <NuxtLink to="/lk">Перейти в личный кабинет</NuxtLink>
         </UButton>
       </div>
     </div>

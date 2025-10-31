@@ -101,18 +101,18 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return Number.isFinite(d.getTime()) ? tsToISO(d.getTime()) : null;
   };
 
-  const highlightRow = (aws: any, row: number) => {
-    try {
-      const range = aws.getRange(row, 0, 1, 28);
-      range.useThemeStyle("light-green");
-      const theme = range.getUsedThemeStyle();
-      setTimeout(() => {
-        try {
-          range.removeThemeStyle(theme);
-        } catch { }
-      }, 1000);
-    } catch { }
-  };
+  // const highlightRow = (aws: any, row: number) => {
+  //   try {
+  //     const range = aws.getRange(row, 0, 1, 28);
+  //     range.useThemeStyle("light-green");
+  //     const theme = range.getUsedThemeStyle();
+  //     setTimeout(() => {
+  //       try {
+  //         range.removeThemeStyle(theme);
+  //       } catch { }
+  //     }, 1000);
+  //   } catch { }
+  // };
 
   const letterToColumnIndex = (letter: string): number =>
     letter.charCodeAt(0) - "A".charCodeAt(0);
@@ -441,7 +441,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const offBeforePaste = univerAPI.addEvent(
     univerAPI.Event.BeforeClipboardPaste,
     async (params: any) => {
-      console.log("[univer-events] offBeforePaste");
       batchPasteInProgress = true;
       const wb = univerAPI.getActiveWorkbook();
       const aws = wb?.getActiveSheet();
@@ -545,15 +544,12 @@ export function registerUniverEvents(univerAPI: FUniver) {
             : row
         );
       }
-      if (changed)
-        console.log("[univer-events] BeforeClipboardPaste: normalized");
     }
   );
 
   const offPasted = univerAPI.addEvent(
     univerAPI.Event.ClipboardPasted,
     async () => {
-      console.log("[univer-events] ClipboardPasted");
       const wb = univerAPI.getActiveWorkbook();
       const aws = wb?.getActiveSheet();
       const s = aws?.getSheet();
@@ -575,8 +571,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
         const sheetStore = useSheetStore();
         const me = await getMe();
         const token = me?.token
-
-        console.log(`Paste range: rows ${startRow}-${endRow}, cols ${startCol}-${endCol}`);
 
         if (me?.roleCode === "ROLE_MANAGER") {
           for (let r = startRow; r <= endRow; r++) {
@@ -650,9 +644,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
             createDtos.push(createDto);
           }
         }
-
-        console.log('createDtos: ', createDtos)
-
         if (createDtos.length > 0) {
           await rpcClient.call('batchRecords', {
             type: 'create',
@@ -662,7 +653,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
             kingsApiBase: kingsApiBase
           })
         }
-
         if (updateDtos.length > 0) {
           await rpcClient.call('batchRecords', {
             type: 'update',
@@ -688,9 +678,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
               break;
             }
           }
-          if (hasData || toStr(rowVals[27])) {
-            highlightRow(aws, r);
-          }
+          // if (hasData || toStr(rowVals[27])) {
+          //   highlightRow(aws, r);
+          // }
         }
       } catch (e) {
         console.error("[univer-events] paste handler failed:", e);
@@ -761,7 +751,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   const offEditChanging = univerAPI.addEvent(univerAPI.Event.SheetEditChanging, async (params: any) => {
     if (params.column === 7 || params.column === 13) {
-      console.log('[univer-events] SheetEditChanging')
       const dataStream = params.value._data.body.dataStream 
 
       if (dataStream)  {
@@ -783,7 +772,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   const offValueChanged = univerAPI.addEvent(
     univerAPI.Event.SheetValueChanged,
-    async (params: any) => {
+    async (params: any) => {      
       // Guards
       if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return;
       if (batchPasteInProgress) return;
@@ -949,14 +938,17 @@ export function registerUniverEvents(univerAPI: FUniver) {
         for (const [row0, cols] of perRowRaw) {
           const allowed = new Set<number>();
           for (const col0 of cols) {
-            if (!NUMERIC_COLS.has(col0)) continue;
-            const v = cv[String(row0)]?.[String(col0)]?.v 
-            if (typeof v === 'string' && v.includes(',')) {
-              const normalized = normalizeNumberStr(v)
-              ws.getRange(row0, col0).setValue({ v: normalized });
-              (cv[String(row0)] ??= {})[String(col0)] = { v: normalized }
+            const isLocked = isCellLockedForManager(listName, row0, col0, store);
+            if (!NUMERIC_COLS.has(col0)) {
+              const v = cv[String(row0)]?.[String(col0)]?.v 
+              if (typeof v === 'string' && v.includes(',')) {
+                const normalized = normalizeNumberStr(v)
+                ws.getRange(row0, col0).setValue({ v: normalized });
+                (cv[String(row0)] ??= {})[String(col0)] = { v: normalized }
+              }
             }
-            if (isCellLockedForManager(listName, row0, col0, store)) {
+              
+            if (isLocked) {
               hadLocked = true;
               lockedCells.push({ row0, col0 });
             } else {
@@ -965,13 +957,17 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
           if (allowed.size) perRowAllowed.set(row0, allowed);
         }
+
         if (hadLocked) {
           revertLockedCells(ws, listName, lockedCells, store);
         }
       }
 
       const perRow = me?.roleCode === 'ROLE_MANAGER' ? perRowAllowed : perRowRaw;
-      if (perRow.size === 0) return;
+
+      if (perRow.size === 0) {
+        return
+      }
 
       // Валидация числовых колонок
       {
@@ -1191,34 +1187,37 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
         }
 
-        console.log('createDtos: ', createDtos)
-
         // ВЫЗОВ ВОРКЕРА ДЛЯ ПАКЕТНОЙ ОБРАБОТКИ
         if (updateDtos.length) {
-          await rpcClient.call('batchRecords', {
-            type: 'update',
-            listName,
-            records: updateDtos,
-            token,
-            kingsApiBase: kingsApiBase
-          });
+          try {
+            await rpcClient.call('batchRecords', {
+              type: 'update',
+              listName,
+              records: updateDtos,
+              token,
+              kingsApiBase: kingsApiBase
+            });
+          } catch (e) {
+          }
         }
         if (createDtos.length) {
-          await rpcClient.call('batchRecords', {
-            type: 'create',
-            listName,
-            records: createDtos,
-            token,
-            kingsApiBase: kingsApiBase
-          });
+          try {
+            await rpcClient.call('batchRecords', {
+              type: 'create',
+              listName,
+              records: createDtos,
+              token,
+              kingsApiBase: kingsApiBase
+            });
+          } catch (e) {
+          } 
         }
 
         for (const r of createdRows) await paintManagerLockedColsOnRow(ws, r);
 
-        const aws = wb.getActiveSheet();
-        for (const r of rowsFinal) highlightRow(aws, r);
+        // const aws = wb.getActiveSheet();
+        // for (const r of rowsFinal) highlightRow(aws, r);
       } catch (e) {
-        console.error('[SheetValueChanged] create/update failed:', e);
       } finally {
         for (const r of rowsFinal) processingRows.delete(keyFor(r));
       }
@@ -1228,8 +1227,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const offClipboardChanged = univerAPI.addEvent(univerAPI.Event.ClipboardChanged, async (params: any) => {
     const startRow = params.fromRange._range.startRow
     const endRow = params.fromRange._range.endRow
-
-    console.log('[univer-events] ClipboardChanged')
 
     if (!startRow || !endRow) return
 
