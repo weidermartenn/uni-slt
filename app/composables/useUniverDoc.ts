@@ -88,7 +88,6 @@ export const useUniverDoc = () => {
       univerInstance.value = instance;
       isInitialized.value = true;
 
-      console.log('Univer Doc инициализирован через Facade API с русской локалью');
       return instance;
 
     } catch (err) {

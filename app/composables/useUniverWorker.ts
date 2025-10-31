@@ -14,10 +14,4 @@ export async function sendBatchToWorker() {
     listName: '10.2025',
     records: [{ id: 34234, name: 'test'}]
   })
-
-  if (result.success) {
-    console.log(`success. total: ${result.count}`)
-  } else {
-    console.error(result.error)
-  }
 }

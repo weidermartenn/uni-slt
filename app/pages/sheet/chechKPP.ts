@@ -13,10 +13,8 @@ export async function checkKPP(kpp: string): Promise<any> {
             },
             body: { query: kpp } 
         });
-        console.log("KPP check result:", result);
         return result;
     } catch (error) {
-        console.error("Error checking KPP:", error);
         throw error;
     }
 }

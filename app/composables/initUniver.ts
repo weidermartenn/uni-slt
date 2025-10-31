@@ -371,14 +371,11 @@ export async function initUniver(records: Record<string, any[]>): Promise<FUnive
     styles, sheets: sheetsDef, resources: []
   });
 
-  console.log('records', records['09.2025'])
-
   // сохранить API в стор
   try {
     const uniStore = useUniverStore();
     uniStore.setUniver(univerAPI);
   } catch (e) {
-    console.log(e);
   }
 
   // ---------- expose API & header styling ----------

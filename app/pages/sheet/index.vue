@@ -242,7 +242,6 @@ async function onDeleteClick() {
 
   try {
     showBusy.value = true
-    console.log(`[Delete] Начало удаления ${ids.length} записей`)
 
     const startTime = performance.now()
 
@@ -257,7 +256,6 @@ async function onDeleteClick() {
     })
 
     const endTime = performance.now()
-    console.log(`[Delete] Конец удаления. Время: ${endTime - startTime} ms`)
   } catch (error) {
     console.error('[Delete] Error: ', error)
     toast.add({

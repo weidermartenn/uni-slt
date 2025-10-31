@@ -550,6 +550,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const offPasted = univerAPI.addEvent(
     univerAPI.Event.ClipboardPasted,
     async () => {
+      batchPasteInProgress = true;
       const wb = univerAPI.getActiveWorkbook();
       const aws = wb?.getActiveSheet();
       const s = aws?.getSheet();
@@ -588,99 +589,69 @@ export function registerUniverEvents(univerAPI: FUniver) {
           }
         }
 
+        const rowCount = endRow - startRow + 1;
+        const allRowValues = aws.getRange(startRow, 0, rowCount, 28).getValues()
+
         const createDtos: any[] = [];
         const updateDtos: any[] = [];
 
-        try {
-          univerStore.beginQuiet?.() 
-          for (let r = startRow; r <= endRow; r++) {
-            for (let c = startCol; c <= endCol; c++) {
-              if (c === 27) continue 
+        for (let i = 0; i < rowCount; i++) {
+          const row0 = startRow + i;
+          const rowVals = allRowValues[i] ?? [] 
 
-              const currentValue = aws.getRange(r, c).getValue() 
-              aws.getRange(r, c).setValue({
-                v: currentValue?.v ?? currentValue,
-              })
-              .clearFormat()
-            }
-          }
-        } catch (e) {
-          console.error(e)
-        } finally {
-          univerStore.endQuiet?.()
-        }
-        
-        for (let r = startRow; r <= endRow; r++) {
-          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
-
-          const idStr = toStr(rowVals[27]);
-          let hasData = false;
+          const idStr = toStr(rowVals[27])
+          let hasData = false 
 
           for (let c = 0; c <= 26; c++) {
             if (toStr(rowVals[c])) {
-              hasData = true;
-              break;
+              hasData = true 
+              break
             }
           }
 
           if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
-            let dto = buildSR(rowVals, listName, Number(idStr));
-            if (me?.roleCode === "ROLE_MANAGER") {
-              const arr = (sheetStore.records as any)?.[listName];
-              const prevRec = Array.isArray(arr) ? arr[r - 1] : undefined;
-              dto = maskDtoForManager(dto, listName, r, sheetStore, prevRec);
+            let dto = buildSR(rowVals, listName, Number(idStr))
+            if (me?.roleCode === 'ROLE_MANAGER') {
+              const arr = (sheetStore.records as any)?.[listName]
+              const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined 
+              dto = maskDtoForManager(dto, listName, row0, sheetStore, prevRec)
             }
-            updateDtos.push(dto);
+            updateDtos.push(dto)
           } else if (hasData) {
-            let createDto = buildSR(rowVals, listName);
-            if (me?.roleCode === "ROLE_MANAGER") {
-              createDto = createManagerSafeDto(
-                createDto,
-                listName,
-                r,
-                sheetStore
-              );
+            let createDto = buildSR(rowVals, listName) 
+            if (me?.roleCode === 'ROLE_MANAGER') {
+              createDto = maskDtoForManager(createDto, listName, row0, sheetStore)
             }
-            createDtos.push(createDto);
+            createDtos.push(createDto)
           }
         }
+
+        const promises = [] 
         if (createDtos.length > 0) {
-          await rpcClient.call('batchRecords', {
+          promises.push(rpcClient.call('batchRecords', {
             type: 'create',
-            listName,
-            records: createDtos,
+            listName, 
+            records: createDtos, 
             token,
             kingsApiBase: kingsApiBase
-          })
+          }))
         }
         if (updateDtos.length > 0) {
-          await rpcClient.call('batchRecords', {
+          promises.push(rpcClient.call('batchRecords', {
             type: 'update',
-            listName,
+            listName, 
             records: updateDtos,
             token,
             kingsApiBase: kingsApiBase
-          })
+          }))
         }
+
+        await Promise.all(promises)
 
         if (me?.roleCode === 'ROLE_MANAGER') {
           for (let r = startRow; r <= endRow; r++) {
             await paintManagerLockedColsOnRow(aws, r)
           }
-        }
-
-        for (let r = startRow; r <= endRow; r++) {
-          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
-          let hasData = false;
-          for (let c = 0; c <= 26; c++) {
-            if (toStr(rowVals[c])) {
-              hasData = true;
-              break;
-            }
-          }
-          // if (hasData || toStr(rowVals[27])) {
-          //   highlightRow(aws, r);
-          // }
         }
       } catch (e) {
         console.error("[univer-events] paste handler failed:", e);
@@ -774,13 +745,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
     univerAPI.Event.SheetValueChanged,
     async (params: any) => {      
       // Guards
-      if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return;
       if (batchPasteInProgress) return;
+      if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return;
 
       const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? '';
 
       // Пропускаем явные вставки — у них свой пайплайн
-      if (PASTE_TRIGGERS.has(trigger) || trigger.includes('paste')) return;
+      if (PASTE_TRIGGERS.has(trigger) || trigger.includes('paste') || trigger.includes('clipboard')) return;
 
       if (batchPasteInProgress) return;
 

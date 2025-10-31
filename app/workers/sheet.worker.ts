@@ -14,8 +14,6 @@ async function makeApiRequest(fullUrl: string, method: string, body: any, token?
       headers.Authorization = `Bearer ${token}`;
     }
 
-    console.log('[Worker] Making API request:', { fullUrl, method, bodyLength: body.length });
-
     const response = await fetch(fullUrl, {
       method,
       headers,
@@ -36,12 +34,6 @@ async function makeApiRequest(fullUrl: string, method: string, body: any, token?
 
 rpc.register('batchRecords', async ({ type, listName, records, token, kingsApiBase }) => {
   try {
-    console.log('[Worker] batchRecords called:', { 
-      type, 
-      listName, 
-      recordsCount: records.length,
-      kingsApiBase // проверяем что передано
-    });
 
     if (!records || !Array.isArray(records) || records.length === 0) {
       return { success: false, error: 'No records provided' };
@@ -61,8 +53,6 @@ rpc.register('batchRecords', async ({ type, listName, records, token, kingsApiBa
 
     // Отправляем запрос на сервер
     const result = await makeApiRequest(fullUrl, method, records, token);
-
-    console.log(`[Worker] batchRecords success: ${records.length} records processed`);
     
     return {
       success: true,
@@ -72,7 +62,6 @@ rpc.register('batchRecords', async ({ type, listName, records, token, kingsApiBa
       serverResponse: result
     };
   } catch (error) {
-    console.error('[Worker] batchRecords error:', error);
     
     // Даже при ошибке возвращаем успех, чтобы не блокировать UI
     return {

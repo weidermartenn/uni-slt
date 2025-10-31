@@ -147,13 +147,6 @@ export const useSheetStore = defineStore("sheet", {
       const firstKey = Object.keys(byList || {})[0];
       let targetList = (dto && (dto as any).listName) || firstKey || listName;
 
-      // компактный лог без больших объектов
-      console.log("[socket]", msg.type, {
-        targetList,
-        lists: Object.keys(byList || {}).length,
-        batch: Array.isArray(dtoArray) ? dtoArray.length : 0,
-      });
-
       if (!targetList) {
         console.warn("[socket] target list is unknown, skip message");
         return;
@@ -228,7 +221,6 @@ export const useSheetStore = defineStore("sheet", {
             removed++;
           }
         }
-        console.log("[socket] deleted", { targetList, count: removed });
         return;
       }
     },
