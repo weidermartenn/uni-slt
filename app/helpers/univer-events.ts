@@ -28,6 +28,31 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   // ====== Helpers ======
 
+  const isValidDate = (value: any): boolean => {
+    if (!value) return true;
+    const strValue = String(value).trim();
+    if (!strValue) return true;
+
+    const dateFormats = [
+      /^\d{4}-\d{2}-\d{2}$/,
+      /^\d{2}\.\d{2}\.\d{4}$/
+    ];
+
+    if (dateFormats.some(format => format.test(strValue))) {
+      const date = new Date(strValue);
+      return !isNaN(date.getTime());
+    }
+
+    if (/^\d+(\.\d+)?$/.test(strValue)) {
+      const num = Number(strValue);
+      if (num >= 25569) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   const unwrapV = (x: any): any =>
     x && typeof x === "object" && "v" in x ? unwrapV(x.v) : x;
 
@@ -449,15 +474,15 @@ export function registerUniverEvents(univerAPI: FUniver) {
       let changed = false;
 
       const norm = (v: any, c: number) => {
-        const absoluteCol = startCol + c 
+        const absoluteCol = startCol + c
 
         if (dateCols.has(absoluteCol)) {
-          return normalizeDateInput(v) ?? v 
+          return normalizeDateInput(v) ?? v
         } else if (NUMERIC_COLS.has(absoluteCol)) {
           return normalizeNumberStr(v)
         } else return v
       }
-        
+
 
       if (typeof (params as any)?.text === "string") {
         const rows = ((params as any).text as string).split(/\r?\n/);
@@ -490,7 +515,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         );
 
         next = next.replace(
-          /(\d+),(\d+)/g, 
+          /(\d+),(\d+)/g,
           (_m, int, dec) => `${int}.${dec}`
         )
 
@@ -510,7 +535,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
           );
 
           next = next.replace(
-            /(\d+),(\d+)/g, 
+            /(\d+),(\d+)/g,
             (_m, int, dec) => `${int}.${dec}`
           );
 
@@ -567,98 +592,149 @@ export function registerUniverEvents(univerAPI: FUniver) {
         const endRow = active.endRow;
         const startCol = active.startColumn;
         const endCol = active.endColumn;
-
         const listName = s.getName();
         const sheetStore = useSheetStore();
         const me = await getMe();
-        const token = me?.token
+        const token = me?.token;
 
+        // Проверка блокировок для менеджера
         if (me?.roleCode === "ROLE_MANAGER") {
           for (let r = startRow; r <= endRow; r++) {
-            let locked = false;
             for (let c = startCol; c <= endCol; c++) {
               if (isCellLockedForManager(listName, r, c, sheetStore)) {
-                locked = true;
-                break;
+                await univerAPI.undo();
+                batchPasteInProgress = false;
+                return;
               }
-            }
-            if (locked) {
-              await univerAPI.undo();
-              return;
             }
           }
         }
 
         const rowCount = endRow - startRow + 1;
-        const allRowValues = aws.getRange(startRow, 0, rowCount, 28).getValues()
 
+        // Валидация вставленных данных перед обработкой
+        try {
+          univerStore.beginQuiet?.();
+          const validationRange = aws.getRange(startRow, 0, rowCount, 28);
+          const allValues = validationRange.getValues();
+
+          let hasInvalidData = false;
+
+          for (let i = 0; i < rowCount; i++) {
+            const rowVals = allValues[i] ?? [];
+            for (let col = 0; col <= 26; col++) {
+              const value = toStr(rowVals[col]);
+              if (!value) continue;
+
+              if (NUMERIC_COLS.has(col) && !isNumericOrEmpty(value)) {
+                hasInvalidData = true;
+                break;
+              }
+
+              if (dateCols.has(col) && !isValidDate(value)) {
+                hasInvalidData = true;
+                break;
+              }
+            }
+            if (hasInvalidData) break;
+          }
+
+          if (hasInvalidData) {
+            await univerAPI.undo();
+            useToast().add({
+              title: 'Неверный формат данных',
+              description: 'Вставлены невалидные данные. Изменения отменены.',
+              color: 'error',
+              icon: 'i-lucide-alert-triangle',
+              duration: 4000
+            });
+            batchPasteInProgress = false;
+            return;
+          }
+        } finally {
+          univerStore.endQuiet?.();
+        }
+
+        // Чтение данных после успешной валидации
+        const allRowValues = aws.getRange(startRow, 0, rowCount, 28).getValues();
         const createDtos: any[] = [];
         const updateDtos: any[] = [];
 
+        // Обработка строк
         for (let i = 0; i < rowCount; i++) {
           const row0 = startRow + i;
-          const rowVals = allRowValues[i] ?? [] 
+          const rowVals = allRowValues[i] ?? [];
 
-          const idStr = toStr(rowVals[27])
-          let hasData = false 
+          const idStr = toStr(rowVals[27]);
+          let hasData = false;
 
           for (let c = 0; c <= 26; c++) {
             if (toStr(rowVals[c])) {
-              hasData = true 
-              break
+              hasData = true;
+              break;
             }
           }
 
           if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
-            let dto = buildSR(rowVals, listName, Number(idStr))
+            let dto = buildSR(rowVals, listName, Number(idStr));
             if (me?.roleCode === 'ROLE_MANAGER') {
-              const arr = (sheetStore.records as any)?.[listName]
-              const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined 
-              dto = maskDtoForManager(dto, listName, row0, sheetStore, prevRec)
+              const arr = (sheetStore.records as any)?.[listName];
+              const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined;
+              dto = maskDtoForManager(dto, listName, row0, sheetStore, prevRec);
             }
-            updateDtos.push(dto)
+            updateDtos.push(dto);
           } else if (hasData) {
-            let createDto = buildSR(rowVals, listName) 
+            let createDto = buildSR(rowVals, listName);
             if (me?.roleCode === 'ROLE_MANAGER') {
-              createDto = maskDtoForManager(createDto, listName, row0, sheetStore)
+              createDto = createManagerSafeDto(createDto, listName, row0, sheetStore);
             }
-            createDtos.push(createDto)
+            createDtos.push(createDto);
           }
         }
 
-        const promises = [] 
+        // Пакетная отправка на сервер
+        const promises = [];
         if (createDtos.length > 0) {
           promises.push(rpcClient.call('batchRecords', {
             type: 'create',
-            listName, 
-            records: createDtos, 
+            listName,
+            records: createDtos,
             token,
             kingsApiBase: kingsApiBase
-          }))
+          }));
         }
         if (updateDtos.length > 0) {
           promises.push(rpcClient.call('batchRecords', {
             type: 'update',
-            listName, 
+            listName,
             records: updateDtos,
             token,
             kingsApiBase: kingsApiBase
-          }))
+          }));
         }
 
-        await Promise.all(promises)
+        // Параллельное выполнение запросов
+        if (promises.length > 0) {
+          await Promise.all(promises);
+        }
 
+        // Оформление заблокированных колонок для менеджера
         if (me?.roleCode === 'ROLE_MANAGER') {
           for (let r = startRow; r <= endRow; r++) {
-            await paintManagerLockedColsOnRow(aws, r)
+            await paintManagerLockedColsOnRow(aws, r);
           }
         }
+
       } catch (e) {
         console.error("[univer-events] paste handler failed:", e);
+        // В случае ошибки также откатываем изменения
+        try {
+          await univerAPI.undo();
+        } catch (undoError) {
+          console.error("Failed to undo after paste error:", undoError);
+        }
       } finally {
-        setTimeout(() => {
-          batchPasteInProgress = false
-        }, 100)
+        batchPasteInProgress = false;
       }
     }
   );
@@ -671,7 +747,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     'sheet.command.paste-all',
   ]);
 
-  let timeoutId: NodeJS.Timeout 
+  let timeoutId: NodeJS.Timeout
   const debounceCheckKPP = (dataStream: string, column: number, row: number, worksheet: any) => {
     clearTimeout(timeoutId)
     timeoutId = setTimeout(async () => {
@@ -691,7 +767,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
             icon: 'i-lucide-x',
             color: 'error'
           });
-      } else {
+        } else {
           toast.add({
             title: 'ИНН подрядчика не найден',
             icon: 'i-lucide-x',
@@ -701,13 +777,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
       } else {
         const suggestions = result.suggestions[0]
         const companyName = suggestions.value.replace(/"/g, '')
-        const inn = suggestions.data.inn 
+        const inn = suggestions.data.inn
         const kpp = suggestions.data.kpp
 
         const newValue = `${companyName} ИНН ${inn}`
 
         try {
-          univerStore.beginQuiet?.() 
+          univerStore.beginQuiet?.()
           worksheet.getRange(row, column).setValue({ v: newValue })
         } catch (e) {
           console.error(e)
@@ -716,17 +792,17 @@ export function registerUniverEvents(univerAPI: FUniver) {
         }
       }
     } catch (error) {
-        console.error('Error checking KPP:', error);
+      console.error('Error checking KPP:', error);
     }
   };
 
   const offEditChanging = univerAPI.addEvent(univerAPI.Event.SheetEditChanging, async (params: any) => {
     if (params.column === 7 || params.column === 13) {
-      const dataStream = params.value._data.body.dataStream 
+      const dataStream = params.value._data.body.dataStream
 
-      if (dataStream)  {
-        const ws = params.worksheet 
-        const row = params.row 
+      if (dataStream) {
+        const ws = params.worksheet
+        const row = params.row
         const column = params.column
 
         debounceCheckKPP(dataStream, column, row, ws)
@@ -743,7 +819,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
   const offValueChanged = univerAPI.addEvent(
     univerAPI.Event.SheetValueChanged,
-    async (params: any) => {      
+    async (params: any) => {
       // Guards
       if (batchPasteInProgress) return;
       if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return;
@@ -752,8 +828,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       // Пропускаем явные вставки — у них свой пайплайн
       if (PASTE_TRIGGERS.has(trigger) || trigger.includes('paste') || trigger.includes('clipboard')) return;
-
-      if (batchPasteInProgress) return;
 
       const wb = univerAPI.getActiveWorkbook();
       const ws = wb?.getActiveSheet();
@@ -911,14 +985,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
           for (const col0 of cols) {
             const isLocked = isCellLockedForManager(listName, row0, col0, store);
             if (!NUMERIC_COLS.has(col0)) {
-              const v = cv[String(row0)]?.[String(col0)]?.v 
+              const v = cv[String(row0)]?.[String(col0)]?.v
               if (typeof v === 'string' && v.includes(',')) {
                 const normalized = normalizeNumberStr(v)
                 ws.getRange(row0, col0).setValue({ v: normalized });
                 (cv[String(row0)] ??= {})[String(col0)] = { v: normalized }
               }
             }
-              
+
             if (isLocked) {
               hadLocked = true;
               lockedCells.push({ row0, col0 });
@@ -946,13 +1020,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
           (rec as any)?.[COL_TO_KEY[col0] as keyof TransportAccounting];
 
         const isValidDate = (value: any): boolean => {
-          if (!value) return true 
+          if (!value) return true
           const strValue = String(value).trim();
-          if (!strValue) return true 
+          if (!strValue) return true
 
           const dateFormats = [
-            /^\d{4}-\d{2}-\d{2}$/, 
-            /^\d{2}\.\d{2}\.\d{4}&/
+            /^\d{4}-\d{2}-\d{2}$/,
+            /^\d{2}\.\d{2}\.\d{4}$/
           ]
 
           if (dateFormats.some(format => format.test(strValue))) {
@@ -970,19 +1044,19 @@ export function registerUniverEvents(univerAPI: FUniver) {
           return false
         };
 
-        let hasInvalidData = false 
-        const invalidCells: Array<{row0: number, col0: number, hadPreviousData: boolean}> = []
+        let hasInvalidData = false
+        const invalidCells: Array<{ row0: number, col0: number, hadPreviousData: boolean }> = []
 
         for (const [row0, cols] of perRow) {
           for (const col0 of cols) {
-            const newValue = cv[String(row0)]?.[String(col0)]?.v 
-            const stringValue = String(newValue ?? '').trim() 
+            const newValue = cv[String(row0)]?.[String(col0)]?.v
+            const stringValue = String(newValue ?? '').trim()
 
             if (NUMERIC_COLS.has(col0) && stringValue !== '') {
               if (!isNumericOrEmpty(newValue)) {
-                const prevRec = Array.isArray(store.records[listName]) ? store.records[listName][row0 - 1] : undefined 
+                const prevRec = Array.isArray(store.records[listName]) ? store.records[listName][row0 - 1] : undefined
                 const prevValue = prevRec ? getOld(prevRec, col0) : null
-                const hadPreviousData = prevValue !== null && prevValue !== undefined && String(prevValue).trim() !== '' 
+                const hadPreviousData = prevValue !== null && prevValue !== undefined && String(prevValue).trim() !== ''
 
                 invalidCells.push({ row0, col0, hadPreviousData })
                 hasInvalidData = true
@@ -991,9 +1065,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
             if (dateCols.has(col0) && stringValue !== '') {
               if (!isValidDate(newValue)) {
-                const prevRec = Array.isArray(store.records[listName]) ? store.records[listName][row0 - 1] : undefined 
+                const prevRec = Array.isArray(store.records[listName]) ? store.records[listName][row0 - 1] : undefined
                 const prevValue = prevRec ? getOld(prevRec, col0) : null
-                const hadPreviousData = prevValue !== null && prevValue !== undefined && String(prevValue).trim() !== '' 
+                const hadPreviousData = prevValue !== null && prevValue !== undefined && String(prevValue).trim() !== ''
 
                 invalidCells.push({ row0, col0, hadPreviousData })
                 hasInvalidData = true
@@ -1005,6 +1079,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
         if (hasInvalidData) {
           try {
             univerStore.beginQuiet?.()
+            await univerAPI.undo()
           } catch { }
 
           try {
@@ -1015,14 +1090,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
               const numericInvalid = cellsWithPreviousData.filter(c => NUMERIC_COLS.has(c.col0))
               const dateInvalid = cellsWithPreviousData.filter(c => dateCols.has(c.col0))
 
-              univerAPI.undo() 
+              univerAPI.undo()
 
-              let errorMessage = 'Обнаружены неверные данные' 
+              let errorMessage = 'Обнаружены неверные данные'
               if (numericInvalid.length > 0) {
-                errorMessage += ` в числовых колонках (строки: ${[...new Set(numericInvalid.map(cell => cell.row0 + 1))].join(', ')});`; 
+                errorMessage += ` в числовых колонках (строки: ${[...new Set(numericInvalid.map(cell => cell.row0 + 1))].join(', ')});`;
               }
               if (dateInvalid.length > 0) {
-                errorMessage += ` в колонках с датами (строки: ${[...new Set(dateInvalid.map(cell => cell.row0 + 1))].join(', ')});`; 
+                errorMessage += ` в колонках с датами (строки: ${[...new Set(dateInvalid.map(cell => cell.row0 + 1))].join(', ')});`;
               }
               errorMessage += ' Изменения отменены.'
 
@@ -1039,7 +1114,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
               for (const { row0, col0 } of cellsWithoutData) {
                 ws.getRange(row0, col0).setValue({ v: '' });
               }
-              
+
               useToast().add({
                 title: 'Неверный формат данных',
                 description: 'Введены неверные данные в пустые ячейки. Ячейки очищены.',
@@ -1057,7 +1132,8 @@ export function registerUniverEvents(univerAPI: FUniver) {
           if (invalidCells.some(cell => cell.hadPreviousData)) {
             return
           }
-        } 
+          return
+        }
       }
 
       // Список строк для обработки
@@ -1181,7 +1257,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
               kingsApiBase: kingsApiBase
             });
           } catch (e) {
-          } 
+          }
         }
 
         for (const r of createdRows) await paintManagerLockedColsOnRow(ws, r);
@@ -1204,7 +1280,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     const me = getUser()
 
     if (me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH') return
-    
+
     const toast = useToast()
 
     if (endRow - startRow >= 10) {
@@ -1216,7 +1292,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       })
       params.text = ''
       params.html = ''
-      
+
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText('')
