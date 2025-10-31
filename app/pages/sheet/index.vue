@@ -17,15 +17,15 @@
       </div>
 
       <!-- Состояние загрузки -->
-      <div v-if="loading" class="w-full h-full v-col justify-center items-center">
+      <!-- <div v-if="loading" class="w-full h-full v-col justify-center items-center">
         <div class="text-center font-medium text-xl v-col justify-center items-center">
           <UIcon name="i-lucide-loader-2" class="h-8 w-8 animate-spin text-gray-900 mx-auto mb-4" />
           <span>Загрузка данных...</span>
         </div>
-      </div>
+      </div> -->
 
       <!-- Состояние ошибки -->
-      <div v-else-if="error" class="w-full h-full v-col justify-center items-center">
+      <!-- <div v-else-if="error" class="w-full h-full v-col justify-center items-center">
         <div class="text-center font-medium text-xl v-col justify-center items-center">
           <UIcon name="i-lucide-alert-circle" class="h-16 w-16 text-gray-400 mx-auto mb-4" />
           <span>Ошибка загрузки данных<br>Проверьте подключение к интернету</span>
@@ -38,26 +38,27 @@
             Попробовать снова
           </UButton>
         </div>
-      </div>
+      </div> -->
 
       <!-- Состояние "нет данных" -->
-      <div v-else-if="!hasRecords" class="w-full h-full v-col justify-center items-center">
+      <!-- <div v-else-if="!hasRecords" class="w-full h-full v-col justify-center items-center">
         <div class="text-center font-medium text-xl v-col justify-center items-center">
           <img src="assets/without-connect.png" class="h-40 w-40">
           <span>Нет данных для отображения ТУ</span>
         </div>
-      </div>
+      </div> -->
       
       <!-- Успешная загрузка с данными -->
-      <div v-else id="univer" class="w-full h-full"></div>
+      <!-- <div v-else id="univer" class="w-full h-full"></div> -->
 
       <!-- Сообщение о долгой загрузке -->
-      <div v-if="showLongLoadMessage && loading" class="fixed bottom-4 right-4 p-4 bg-orange-100 border border-orange-300 rounded-lg">
+      <!-- <div v-if="showLongLoadMessage && loading" class="fixed bottom-4 right-4 p-4 bg-orange-100 border border-orange-300 rounded-lg">
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-info" class="h-5 w-5 text-orange-600" />
           <span class="text-sm text-orange-800">Загрузка занимает больше времени чем обычно...</span>
         </div>
-      </div>
+      </div> -->
+      <div id="univer" class="w-full h-full"></div>
     </div>
   </UApp>
 </template>
