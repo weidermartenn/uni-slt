@@ -74,6 +74,11 @@ export const useEmployeeStore = defineStore("employee", {
 
     async editEmployeeInfo(dto: UserDto) {
       await $fetch(`${kingsApiBase}/admin/employees`, { method: "PATCH", headers: authHeaders(), body: dto });
+    },
+
+    async issueSalary(dto: any) {
+      const response = await $fetch(`${kingsApiBase}/employee/issueSalary`, { method: "POST", headers: authHeaders(), body: dto });
+      return response
     }
   }
 });

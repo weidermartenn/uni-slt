@@ -40,6 +40,7 @@
                 </div>
               </div>
             </UCard>
+            <UButton @click="issueSalary">Выдать ЗП</UButton>
             <!-- Контактная информация -->
             <UCard id="animated" class="border border-gray-200 shadow-sm hover:shadow-md transition-all duration-300">
               <template #header>
@@ -308,6 +309,20 @@ const roleColor = computed(() => {
     default: return 'gray'
   }
 })
+
+const issueSalary = async () => {
+  try {
+    const dto = {
+      employeeId: 31,
+      percent: true,
+      salary: 10000
+    }
+    const response = await employeeStore.issueSalary(dto)
+    console.log(response)
+    await employeeStore.fetchForLK()
+    console.log(employeeStore.listForLK)
+  } catch { }
+}
 
 const statisticsMonths = computed(() => {
   return Object.keys(userData.value?.object?.statistics || {}).sort().reverse() || []

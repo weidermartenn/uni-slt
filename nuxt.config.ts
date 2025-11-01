@@ -48,6 +48,14 @@ export default defineNuxtConfig({
         output: {
           manualChunks: {
             'vue-vendor': ['vue', '@vue/shared', '@vue/runtime-core', '@vue/runtime-dom'],
+            'univer-core': ['@univerjs/core', '@univerjs/facade'],
+            'univer-sheets': ['@univerjs/sheets', '@univerjs/sheets-ui'],
+            'univer-plugins': [
+              '@univerjs/preset-sheets-data-validation',
+              '@univerjs/preset-sheets-filter',
+              '@univerjs/preset-sheets-conditional-formatting'
+            ],
+            'ui-vendor': ['@nuxt/ui', '@vueuse/nuxt']
           }
         }
       }

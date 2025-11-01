@@ -17,15 +17,34 @@
       </div>
 
       <!-- Состояние загрузки -->
-      <!-- <div v-if="loading" class="w-full h-full v-col justify-center items-center">
+      <div v-if="loading" class="w-full h-full v-col justify-center items-center">
         <div class="text-center font-medium text-xl v-col justify-center items-center">
           <UIcon name="i-lucide-loader-2" class="h-8 w-8 animate-spin text-gray-900 mx-auto mb-4" />
           <span>Загрузка данных...</span>
+
+          <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
+            <div
+              class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+              :style="{ width: `${loadProgress}%`}"
+            ></div>
+          </div>
+
+          <div class="text-sm text-gray-600 dark:text-zinc-100">
+            <span v-if="loadState.currentChunk > 0">
+              Загружено: {{ loadState.currentChunk }} из {{ loadState.totalChunks  }}
+            </span>
+            <span v-else>Подготовка к загрузке...</span>
+          </div>
+
+          <div class="text-xs text-gray-500 dark:text-zinc-200 mt-2 ">
+            <div v-if="loadState.currentStep">{{ loadState.currentStep }}</div>
+            <div v-if="loadState.estimatedTime">Примерное время: {{ loadState.estimatedTime }}</div>
+          </div>
         </div>
-      </div> -->
+      </div>
 
       <!-- Состояние ошибки -->
-      <!-- <div v-else-if="error" class="w-full h-full v-col justify-center items-center">
+      <div v-else-if="error" class="w-full h-full v-col justify-center items-center">
         <div class="text-center font-medium text-xl v-col justify-center items-center">
           <UIcon name="i-lucide-alert-circle" class="h-16 w-16 text-gray-400 mx-auto mb-4" />
           <span>Ошибка загрузки данных<br>Проверьте подключение к интернету</span>
@@ -38,27 +57,26 @@
             Попробовать снова
           </UButton>
         </div>
-      </div> -->
+      </div>
 
       <!-- Состояние "нет данных" -->
-      <!-- <div v-else-if="!hasRecords" class="w-full h-full v-col justify-center items-center">
+      <div v-else-if="!hasRecords" class="w-full h-full v-col justify-center items-center">
         <div class="text-center font-medium text-xl v-col justify-center items-center">
           <img src="assets/without-connect.png" class="h-40 w-40">
           <span>Нет данных для отображения ТУ</span>
         </div>
-      </div> -->
+      </div>
       
       <!-- Успешная загрузка с данными -->
-      <!-- <div v-else id="univer" class="w-full h-full"></div> -->
+      <div v-else id="univer" class="w-full h-full"></div>
 
       <!-- Сообщение о долгой загрузке -->
-      <!-- <div v-if="showLongLoadMessage && loading" class="fixed bottom-4 right-4 p-4 bg-orange-100 border border-orange-300 rounded-lg">
+      <div v-if="showLongLoadMessage && loading" class="fixed bottom-4 right-4 p-4 bg-orange-100 border border-orange-300 rounded-lg">
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-info" class="h-5 w-5 text-orange-600" />
           <span class="text-sm text-orange-800">Загрузка занимает больше времени чем обычно...</span>
         </div>
-      </div> -->
-      <div id="univer" class="w-full h-full"></div>
+      </div>
     </div>
   </UApp>
 </template>
@@ -84,6 +102,15 @@ const LONG_LOAD_TIMEOUT = 7000
 const loading = ref(true)
 const error = ref(false)
 const hasRecords = ref(false)
+const loadProgress = ref(0)
+
+const loadState = reactive({
+  currentChunk: 0, 
+  totalChunks: 0,
+  currentStep: '',
+  estimatedTime: '',
+  startTime: 0
+})
 
 const deleteState = reactive({
   pending: false,
@@ -95,6 +122,27 @@ const univerStore = useUniverStore()
 const showBusy = ref(false)
 const showLongLoadMessage = ref(false)
 let longLoadTimeout: NodeJS.Timeout | null = null
+
+const updateProgress = (chunk: number, total: number, step?: string) => {
+  loadState.currentChunk = chunk 
+  loadState.totalChunks = total 
+  if (step) loadState.currentStep = step
+
+  loadProgress.value = total > 0 ? Math.round((chunk / total) * 100) : 0 
+
+  if (loadState.startTime && chunk > 0) {
+    const elapsed = Date.now() - loadState.startTime 
+    const timePerChunk = elapsed / chunk 
+    const remainingChunks = total - chunk 
+    const remainingTime = Math.round((timePerChunk * remainingChunks) / 1000)
+
+    if (remainingTime < 60) {
+      loadState.estimatedTime = `${remainingTime} сек`
+    } else {
+      loadState.estimatedTime = `${Math.round(remainingTime / 60)} мин`
+    }
+  }
+}
 
 // Проверка наличия данных
 const checkRecords = () => {
@@ -119,6 +167,25 @@ const retryLoadData = async () => {
   await loadData()
 }
 
+// Имитация загрузки чанков (замените на реальную логику)
+const simulateChunkedLoading = async () => {
+  // Предположим, что у нас есть 5 чанков для загрузки
+  const totalChunks = 5
+  loadState.startTime = Date.now()
+  loadState.totalChunks = totalChunks
+  
+  for (let i = 1; i <= totalChunks; i++) {
+    // Имитация задержки между чанками
+    await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000))
+    
+    // Обновляем прогресс
+    updateProgress(i, totalChunks, `Загрузка чанка ${i} из ${totalChunks}`)
+    
+    // Здесь будет реальная загрузка данных для каждого чанка
+    // Например: await loadChunk(i)
+  }
+}
+
 // Основная функция загрузки данных
 const loadData = async () => {
   try {
@@ -128,6 +195,13 @@ const loadData = async () => {
     // Сбрасываем состояния
     loading.value = true
     error.value = false
+    loadProgress.value = 0 
+    loadState.currentChunk = 0
+    loadState.totalChunks = 0
+    loadState.currentStep = 'Инициализация загрузки'
+    loadState.startTime = Date.now()
+
+    await simulateChunkedLoading()
     
     // Загружаем данные
     await Promise.all([
