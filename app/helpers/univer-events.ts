@@ -392,6 +392,20 @@ export function registerUniverEvents(univerAPI: FUniver) {
     });
   });
 
+  const validateRecordBeforeSend = (dto: any, type: 'create' | 'update'): { isValid: boolean; errors: string[] } => {
+    const errors: string[] = []
+
+    if (type === 'create') {
+      if (!dto.numberOfContainer && !dto.cargo && !dto.client) {
+        errors.push('Record requires at least one of: container number, cargo, or client')
+      }
+    }
+
+    if (type === 'update' && (!dto.id || dto.id <= 0)) {
+      errors.push('Update requires valid ID')
+    }
+  }
+
   // ====== Откат заблокированных ячеек и далее — ваш существующий код ======
   const getPrevValueForCell = (
     listName: string,

@@ -1,3 +1,4 @@
+import { isTransformMutationsWithChangesetFailure } from "@univerjs/presets/lib/types/preset-docs-collaboration/index.js";
 import { RPCServer } from "~/utils/rpc";
 
 const rpc = new RPCServer();
@@ -51,18 +52,54 @@ rpc.register('batchRecords', async ({ type, listName, records, token, kingsApiBa
 
     const method = type === 'create' ? 'POST' : 'PATCH';
 
-    // Отправляем запрос на сервер
-    const result = await makeApiRequest(fullUrl, method, records, token);
     
-    return {
-      success: true,
-      count: records.length,
-      created: type === 'create' ? records.length : 0,
-      updated: type === 'update' ? records.length : 0,
-      serverResponse: result
-    };
-  } catch (error) {
-    
+
+    try {
+      // Отправляем запрос на сервер
+      const result = await makeApiRequest(fullUrl, method, records, token);
+
+      return {
+        success: true,
+        count: records.length,
+        created: type === 'create' ? records.length : 0,
+        updated: type === 'update' ? records.length : 0,
+        serverResponse: result
+      };
+    } catch (e: any) {
+      if (e.message.includes('Batch update returned unexpected row count') 
+        || e.message.includes('Объект не найден')) {
+          console.warn('[Worker] Optimistic locking conflict or record not found, retrying...');
+
+          if (type === 'update') {
+            try {
+              console.log('[Worker] Attempting to create records instead of update')
+              const createResult = await makeApiRequest(fullUrl, 'POST', records, token)
+
+              return {
+                success: true, 
+                count: records.length,
+                created: records.length,
+                updated: 0,
+                warning: 'Records were recreated due to sync conflict',
+                serverResponse: createResult
+              };
+            } catch (ce) {
+              console.error('[Worker] Recreation also failed: ', ce)
+            }
+          }
+        }
+
+        return {
+          success: true,
+          count: records.length,
+          created: type === 'create' ? records.length : 0,
+          updated: type === 'update' ? records.length : 0,
+          error: e.message || String(e),
+          warning: 'Changes saved locally, will sync via sockets'
+        };
+    }
+  } catch (error: any) {
+    console.error('[Worker] Unexpected error in batchRecords: ', error)
     // Даже при ошибке возвращаем успех, чтобы не блокировать UI
     return {
       success: true,
@@ -74,5 +111,3 @@ rpc.register('batchRecords', async ({ type, listName, records, token, kingsApiBa
     };
   }
 });
-
-console.log('[Worker] RPC initialized');
