@@ -126,6 +126,37 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return Number.isFinite(d.getTime()) ? tsToISO(d.getTime()) : null;
   };
 
+  // Улучшенная функция нормализации чисел
+  const normalizeNumberStr = (raw: any): string => {
+    if (raw == null) return "";
+    const str = String(raw).trim();
+    if (!str) return "";
+    
+    // Заменяем запятые на точки и убираем пробелы (разделители тысяч)
+    const normalized = str
+      .replace(/\s+/g, "") // убираем пробелы
+      .replace(/,/g, "."); // заменяем запятые на точки
+    
+    // Проверяем, является ли результат валидным числом
+    if (/^[-+]?\d*\.?\d+$/.test(normalized)) {
+      return normalized;
+    }
+    
+    return str; // возвращаем оригинал, если не удалось нормализовать
+  };
+
+  // Улучшенная проверка числовых значений
+  const isNumericOrEmpty = (v: any): boolean => {
+    if (v == null) return true;
+    const s = String(v).trim();
+    if (!s) return true;
+    if (s.startsWith("#")) return false;
+    
+    // Нормализуем число перед проверкой
+    const normalized = normalizeNumberStr(s);
+    return /^[-+]?\d*\.?\d+$/.test(normalized) && Number.isFinite(Number(normalized));
+  };
+
   // const highlightRow = (aws: any, row: number) => {
   //   try {
   //     const range = aws.getRange(row, 0, 1, 28);
@@ -202,22 +233,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
     "id", // 27 AB
   ] as const;
 
-  // buildSR: нормализация дат
+  // buildSR: нормализация дат и чисел
   const buildSR = (rowVals: any[], listName: string, id: number = 0) => {
     const v = (i: number) => {
       if (dateCols.has(i)) {
         return normalizeDateInput(rowVals[i]) ?? "";
       } else if (NUMERIC_COLS.has(i)) {
         return normalizeNumberStr(toStr(rowVals[i]));
-      } else {
-        // Для текстовых колонок
-        const value = toStr(rowVals[i]);
-        // Если значение состоит только из цифр И содержит запятую, оборачиваем в кавычки
-        if (/^[\d,]+$/.test(value) && value.includes(',')) {
-          return `'${value}`;
-        }
-        return value;
-      }
+      } else return toStr(rowVals[i])
     };
 
     return {
@@ -297,15 +320,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
       if (String(val ?? "").trim() !== "") return true;
     }
     return false;
-  };
-
-  const isNumericOrEmpty = (v: any): boolean => {
-    if (v == null) return true;
-    const s = String(v).trim();
-    if (!s) return true;
-    if (s.startsWith("#")) return false;
-    if (typeof v === "number") return Number.isFinite(v);
-    return /^[-+]?\d+(?:\.\d+)?$/.test(s) && Number.isFinite(Number(s));
   };
 
   // ====== СИНХ: UI <- SOCKET (удаление)
@@ -400,20 +414,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
     });
   });
 
-  const validateRecordBeforeSend = (dto: any, type: 'create' | 'update'): { isValid: boolean; errors: string[] } => {
-    const errors: string[] = []
-
-    if (type === 'create') {
-      if (!dto.numberOfContainer && !dto.cargo && !dto.client) {
-        errors.push('Record requires at least one of: container number, cargo, or client')
-      }
-    }
-
-    if (type === 'update' && (!dto.id || dto.id <= 0)) {
-      errors.push('Update requires valid ID')
-    }
-  }
-
   // ====== Откат заблокированных ячеек и далее — ваш существующий код ======
   const getPrevValueForCell = (
     listName: string,
@@ -482,18 +482,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
   };
 
   // ====== Вставка: до / после ======
-  const normalizeNumberStr = (raw: any): string => {
-  const str = String(raw ?? "").trim();
-  
-  // Если строка не выглядит как число, возвращаем как есть
-  if (!/^-?\d+([.,]\d+)?$/.test(str.replace(/\s/g, ''))) {
-    return str;
-  }
-  
-  // Нормализуем только настоящие числа
-  return str.replace(/\s/g, '').replace(",", ".");
-};
-
   const offBeforePaste = univerAPI.addEvent(
     univerAPI.Event.BeforeClipboardPaste,
     async (params: any) => {
@@ -545,6 +533,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
           (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`
         );
 
+        // Нормализуем числа в HTML - заменяем запятые на точки
         next = next.replace(
           /(\d+),(\d+)/g,
           (_m, int, dec) => `${int}.${dec}`
@@ -565,6 +554,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
             (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`
           );
 
+          // Нормализуем числа в HTML - заменяем запятые на точки
           next = next.replace(
             /(\d+),(\d+)/g,
             (_m, int, dec) => `${int}.${dec}`
@@ -657,9 +647,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
               const value = toStr(rowVals[col]);
               if (!value) continue;
 
-              if (NUMERIC_COLS.has(col) && !isNumericOrEmpty(value)) {
-                hasInvalidData = true;
-                break;
+              // Для числовых колонок нормализуем значение перед проверкой
+              if (NUMERIC_COLS.has(col)) {
+                const normalizedValue = normalizeNumberStr(value);
+                if (!isNumericOrEmpty(normalizedValue)) {
+                  hasInvalidData = true;
+                  break;
+                }
               }
 
               if (dateCols.has(col) && !isValidDate(value)) {
@@ -840,10 +834,15 @@ export function registerUniverEvents(univerAPI: FUniver) {
       }
     }
 
+    // Автоматическая нормализация чисел при редактировании
     if (NUMERIC_COLS.has(params.column)) {
       const dataStream = params.value._data.body.dataStream
-      if (dataStream && dataStream.includes(',')) {
-        params.value._data.body.dataStream = dataStream.replace(/,/g, '.')
+      if (dataStream) {
+        // Нормализуем число - заменяем запятые на точки
+        const normalized = normalizeNumberStr(dataStream)
+        if (normalized !== dataStream) {
+          params.value._data.body.dataStream = normalized
+        }
       }
     }
   })
@@ -1015,12 +1014,16 @@ export function registerUniverEvents(univerAPI: FUniver) {
           const allowed = new Set<number>();
           for (const col0 of cols) {
             const isLocked = isCellLockedForManager(listName, row0, col0, store);
-            if (!NUMERIC_COLS.has(col0)) {
+            
+            // Автоматическая нормализация чисел для менеджера
+            if (NUMERIC_COLS.has(col0)) {
               const v = cv[String(row0)]?.[String(col0)]?.v
-              if (typeof v === 'string' && v.includes(',')) {
+              if (typeof v === 'string') {
                 const normalized = normalizeNumberStr(v)
-                ws.getRange(row0, col0).setValue({ v: normalized });
-                (cv[String(row0)] ??= {})[String(col0)] = { v: normalized }
+                if (normalized !== v) {
+                  ws.getRange(row0, col0).setValue({ v: normalized });
+                  (cv[String(row0)] ??= {})[String(col0)] = { v: normalized }
+                }
               }
             }
 
@@ -1050,31 +1053,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
         const getOld = (rec: TransportAccounting, col0: number) =>
           (rec as any)?.[COL_TO_KEY[col0] as keyof TransportAccounting];
 
-        const isValidDate = (value: any): boolean => {
-          if (!value) return true
-          const strValue = String(value).trim();
-          if (!strValue) return true
-
-          const dateFormats = [
-            /^\d{4}-\d{2}-\d{2}$/,
-            /^\d{2}\.\d{2}\.\d{4}$/
-          ]
-
-          if (dateFormats.some(format => format.test(strValue))) {
-            const date = new Date(strValue)
-            return !isNaN(date.getTime())
-          }
-
-          if (/^\d+(\.\d+)?$/.test(strValue)) {
-            const num = Number(strValue)
-            if (num >= 25569) {
-              return true
-            }
-          }
-
-          return false
-        };
-
         let hasInvalidData = false
         const invalidCells: Array<{ row0: number, col0: number, hadPreviousData: boolean }> = []
 
@@ -1084,7 +1062,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
             const stringValue = String(newValue ?? '').trim()
 
             if (NUMERIC_COLS.has(col0) && stringValue !== '') {
-              if (!isNumericOrEmpty(newValue)) {
+              // Нормализуем значение перед проверкой
+              const normalizedValue = normalizeNumberStr(newValue);
+              if (!isNumericOrEmpty(normalizedValue)) {
                 const prevRec = Array.isArray(store.records[listName]) ? store.records[listName][row0 - 1] : undefined
                 const prevValue = prevRec ? getOld(prevRec, col0) : null
                 const hadPreviousData = prevValue !== null && prevValue !== undefined && String(prevValue).trim() !== ''
