@@ -47,7 +47,7 @@ export const useEmployeeStore = defineStore("employee", {
     async fetchForLK() {
       const userInfo = getUser();
       const id = userInfo?.id
-      const data = await $fetch(`${kingsApiBase}/user/2`, { method: 'GET', headers: authHeaders() })
+      const data = await $fetch(`${kingsApiBase}/user/${id}`, { method: 'GET', headers: authHeaders() })
       this.listForLK = data
     },
 

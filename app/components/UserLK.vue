@@ -24,7 +24,7 @@
                       <UBadge variant="subtle" class="font-medium dark:bg-gray-700">
                         {{ userData.object.role.name }}
                       </UBadge>
-                      <span class="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                      <span v-if="userData.object.login" class="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
                         @{{ userData.object.login }}
                         <UButton
                           color="info"
@@ -40,7 +40,7 @@
                 </div>
               </div>
             </UCard>
-            <UButton @click="issueSalary">Выдать ЗП</UButton>
+            <!-- <UButton @click="issueSalary">Выдать ЗП</UButton> -->
             <!-- Контактная информация -->
             <UCard id="animated" class="border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-all duration-300 dark:bg-gray-800">
               <template #header>

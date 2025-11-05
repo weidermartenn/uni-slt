@@ -209,7 +209,15 @@ export function registerUniverEvents(univerAPI: FUniver) {
         return normalizeDateInput(rowVals[i]) ?? "";
       } else if (NUMERIC_COLS.has(i)) {
         return normalizeNumberStr(toStr(rowVals[i]));
-      } else return toStr(rowVals[i])
+      } else {
+        // Для текстовых колонок
+        const value = toStr(rowVals[i]);
+        // Если значение состоит только из цифр И содержит запятую, оборачиваем в кавычки
+        if (/^[\d,]+$/.test(value) && value.includes(',')) {
+          return `'${value}`;
+        }
+        return value;
+      }
     };
 
     return {
@@ -474,8 +482,17 @@ export function registerUniverEvents(univerAPI: FUniver) {
   };
 
   // ====== Вставка: до / после ======
-  const normalizeNumberStr = (raw: any): string =>
-    (raw ?? "").toString().replace(/\s+/g, "").replace(",", ".");
+  const normalizeNumberStr = (raw: any): string => {
+  const str = String(raw ?? "").trim();
+  
+  // Если строка не выглядит как число, возвращаем как есть
+  if (!/^-?\d+([.,]\d+)?$/.test(str.replace(/\s/g, ''))) {
+    return str;
+  }
+  
+  // Нормализуем только настоящие числа
+  return str.replace(/\s/g, '').replace(",", ".");
+};
 
   const offBeforePaste = univerAPI.addEvent(
     univerAPI.Event.BeforeClipboardPaste,
