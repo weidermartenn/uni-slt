@@ -144,17 +144,15 @@ const updateProgress = (chunk: number, total: number, step?: string) => {
   }
 }
 
-// Проверка наличия данных
+// Проверка наличия данных (обновленная логика)
 const checkRecords = () => {
   const store = useSheetStore()
   const recordsData = store.records
   
-  // Проверяем, что records - объект и в нем есть хотя бы один непустой массив
-  if (recordsData && typeof recordsData === 'object') {
-    const hasData = Object.values(recordsData).some(arr => 
-      Array.isArray(arr) && arr.length > 0
-    )
-    hasRecords.value = hasData
+  // Проверяем, что records - объект и в нем есть хотя бы один ключ (месяц)
+  // Даже если массивы пустые, это считается наличием данных для отображения таблиц
+  if (recordsData && typeof recordsData === 'object' && Object.keys(recordsData).length > 0) {
+    hasRecords.value = true
   } else {
     hasRecords.value = false
   }
@@ -359,7 +357,7 @@ onMounted(async () => {
   // Загружаем данные
   await loadData()
 
-  // Инициализируем Univer только если есть данные
+  // Инициализируем Univer только если есть данные (включая пустые массивы по месяцам)
   if (hasRecords.value) {
     try {
       api.value = await initUniver(records.value)
