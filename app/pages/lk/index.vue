@@ -4,8 +4,6 @@
         :items="items" 
         v-if="user?.roleCode === 'ROLE_ADMIN'"
         :unmount-on-hide="false"
-        :model-value="activeTab"
-        @update:model-value="onTabChange"
       >
             <template #lk>
               <UserLK />
@@ -23,9 +21,6 @@ import { getUser } from '~/helpers/getUser'
 
 useHead({ title: 'СЛТ Личный кабинет' })
 definePageMeta({ layout: 'default' })
-
-const route = useRoute() 
-const router = useRouter()
 
 const items = [
     {
