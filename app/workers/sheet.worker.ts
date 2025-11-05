@@ -9,7 +9,7 @@ async function makeApiRequest(fullUrl: string, method: string, body: any, token?
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
-    
+
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
@@ -48,10 +48,7 @@ rpc.register('batchRecords', async ({ type, listName, records, token, kingsApiBa
     // Используем эндпоинты из sheet-store-optimized.ts
     const endpoint = "/workTable/transportAccounting";
     const fullUrl = `${kingsApiBase}${endpoint}`;
-
     const method = type === 'create' ? 'POST' : 'PATCH';
-
-    
 
     try {
       // Отправляем запрос на сервер
@@ -65,48 +62,34 @@ rpc.register('batchRecords', async ({ type, listName, records, token, kingsApiBa
         serverResponse: result
       };
     } catch (e: any) {
-      if (e.message.includes('Batch update returned unexpected row count') 
+      console.error('[Worker] API error:', e);
+
+      // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Не пытаемся автоматически пересоздать
+      if (e.message.includes('Batch update returned unexpected row count')
         || e.message.includes('Объект не найден')) {
-          console.warn('[Worker] Optimistic locking conflict or record not found, retrying...');
-
-          if (type === 'update') {
-            try {
-              console.log('[Worker] Attempting to create records instead of update')
-              const createResult = await makeApiRequest(fullUrl, 'POST', records, token)
-
-              return {
-                success: true, 
-                count: records.length,
-                created: records.length,
-                updated: 0,
-                warning: 'Records were recreated due to sync conflict',
-                serverResponse: createResult
-              };
-            } catch (ce) {
-              console.error('[Worker] Recreation also failed: ', ce)
-            }
-          }
-        }
 
         return {
-          success: true,
-          count: records.length,
-          created: type === 'create' ? records.length : 0,
-          updated: type === 'update' ? records.length : 0,
-          error: e.message || String(e),
-          warning: 'Changes saved locally, will sync via sockets'
+          success: false,
+          error: 'SYNC_CONFLICT',
+          message: 'Data was modified by another user. Please refresh and try again.',
+          code: 'CONFLICT'
         };
+      }
+
+      // Для других ошибок также возвращаем false
+      return {
+        success: false,
+        error: e.message || String(e),
+        code: 'SERVER_ERROR'
+      };
     }
   } catch (error: any) {
     console.error('[Worker] Unexpected error in batchRecords: ', error)
     // Даже при ошибке возвращаем успех, чтобы не блокировать UI
     return {
-      success: true,
-      count: records.length,
-      created: type === 'create' ? records.length : 0,
-      updated: type === 'update' ? records.length : 0,
+      success: false,
       error: error.message || String(error),
-      warning: 'Changes saved locally, will sync via sockets'
+      code: 'UNKNOWN_ERROR'
     };
   }
 });
