@@ -5,13 +5,13 @@ import { useSheetStore } from "~/stores/sheet-store-optimized";
 import { useUniverStore } from "~/stores/univer-store";
 import { getUser } from "./getUser";
 import type { TransportAccounting } from "~/entities/TransportAccountingDto/types";
-import { rpcClient } from '~/composables/univerWorkerClient'
+import { rpcClient } from "~/composables/univerWorkerClient";
 import { checkKPP } from "~/pages/sheet/chechKPP";
-
+import { useEmployeeStore } from "~/stores/employee-store";
 
 export function registerUniverEvents(univerAPI: FUniver) {
   const config = useRuntimeConfig();
-  const kingsApiBase = config.public.kingsApiBase
+  const kingsApiBase = config.public.kingsApiBase;
 
   // ====== Константы/флаги ======
   const dateCols = new Set([0, 4, 11, 12, 19]); // A,E,L,M,T (0-based)
@@ -24,252 +24,9 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const sheetStore = useSheetStore(); // <— нужен для подписки на сокет
 
   // числовые колонки (0-based): J, Q, R, Y, а также 25, 26
-  const NUMERIC_COLS = new Set([9, 16, 17, 24, 25, 26]); 
-
-  let externalUpdateInProgress = false;
-  let valueChangeTimeout: NodeJS.Timeout
-  let pendingChanges = new Map<string, {
-    row0: number;
-    cols: Set<number>;
-    timestamp: number;
-  }>()
-  let processingChanges = false;
-
-  const DEBOUNCE_DELAY = 1000
-  const MIN_PROCESSING_INTERVAL = 500
-  let lastProcessingTime = 0
+  const NUMERIC_COLS = new Set([9, 16, 17, 24, 25, 26]);
 
   // ====== Helpers ======
-
-  function applyExternalUpdate(callback: () => void) {
-    externalUpdateInProgress = true;
-    try {
-      callback()
-    } finally {
-      setTimeout(() => {
-        externalUpdateInProgress = false
-      }, 100)
-    }
-  }
-
-  // Функция для обработки отложенных изменений
-  async function processPendingChanges() {
-    if (processingChanges || pendingChanges.size === 0) return;
-
-    const now = Date.now();
-    if (now - lastProcessingTime < MIN_PROCESSING_INTERVAL) {
-      // Если обрабатывали недавно, откладываем еще
-      valueChangeTimeout = setTimeout(processPendingChanges, MIN_PROCESSING_INTERVAL);
-      return;
-    }
-
-    processingChanges = true;
-    lastProcessingTime = now;
-
-    try {
-      const changes = new Map(pendingChanges);
-      pendingChanges.clear();
-
-      // Группируем изменения по листам
-      const changesBySheet = new Map<string, Map<number, Set<number>>>();
-
-      for (const [key, change] of changes) {
-        const [listName, rowStr] = key.split('#');
-        const row0 = parseInt(rowStr);
-
-        if (!changesBySheet.has(listName)) {
-          changesBySheet.set(listName, new Map());
-        }
-        const sheetChanges = changesBySheet.get(listName)!;
-
-        if (!sheetChanges.has(row0)) {
-          sheetChanges.set(row0, new Set());
-        }
-        const rowChanges = sheetChanges.get(row0)!;
-
-        change.cols.forEach(col => rowChanges.add(col));
-      }
-
-      // Обрабатываем каждый лист
-      for (const [listName, sheetChanges] of changesBySheet) {
-        await processSheetChanges(listName, sheetChanges);
-      }
-
-    } catch (error) {
-      console.error('[univer-events] Error processing batched changes:', error);
-    } finally {
-      processingChanges = false;
-    }
-  }
-
-  async function processSheetChanges(listName: string, changes: Map<number, Set<number>>) {
-    const wb = univerAPI.getActiveWorkbook();
-    const ws = wb?.getActiveSheet();
-    const sheet = ws?.getSheet();
-
-    if (!wb || !ws || !sheet || sheet.getName() !== listName) {
-      return;
-    }
-
-    // Собираем все строки для обработки
-    const rowsToProcess = Array.from(changes.keys());
-
-    // Основная логика обработки (существующий код из SheetValueChanged)
-    const store = useSheetStore();
-    const me = await getMe();
-    const token = me?.token;
-    const config = useRuntimeConfig();
-    const kingsApiBase = config.public.kingsApiBase;
-
-    const createDtos: any[] = [];
-    const updateDtos: any[] = [];
-    const createdRows: number[] = [];
-
-    // Исключаем строки, уже в обработке
-    const processingRows = new Set<string>();
-    const keyFor = (r: number) => `${listName}#${r}`;
-    const rowsFinal = rowsToProcess.filter((r) => {
-      const k = keyFor(r);
-      const busy = processingRows.has(k);
-      if (!busy) processingRows.add(k);
-      return !busy;
-    });
-
-    if (!rowsFinal.length) return;
-
-    try {
-      for (const row0 of rowsFinal) {
-        const rowVals = ws.getRange(row0, 0, 1, 28).getValues()?.[0] ?? [];
-        const cols = changes.get(row0)!;
-
-        // ID: сначала из листа, затем fallback к стору
-        let idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? '').trim();
-        let idNum = Number(idStr);
-        if (!Number.isFinite(idNum) || idNum <= 0) {
-          const arrAll = (store.records as any)?.[listName] as TransportAccounting[] | undefined;
-          const prevRecAtRow = Array.isArray(arrAll) ? arrAll[row0 - 1] : undefined;
-          const prevId = Number(prevRecAtRow?.id);
-          if (Number.isFinite(prevId) && prevId > 0) idNum = prevId;
-        }
-
-        const arrAll = (store.records as any)?.[listName] as TransportAccounting[] | undefined;
-        const prevRec = Array.isArray(arrAll) ? arrAll[row0 - 1] : undefined;
-
-        if (Number.isFinite(idNum) && idNum > 0) {
-          let dto = { ...buildSR(rowVals, listName, idNum), id: idNum };
-          if (me?.roleCode === 'ROLE_MANAGER') {
-            dto = maskDtoForManager(dto, listName, row0, store, prevRec);
-          }
-          updateDtos.push(dto);
-        } else {
-          if (rowHasData(rowVals)) {
-            let createDto = buildSR(rowVals, listName);
-            if (me?.roleCode === 'ROLE_MANAGER') {
-              createDto = createManagerSafeDto(createDto, listName, row0, store);
-            }
-            createDtos.push(createDto);
-            createdRows.push(row0);
-          }
-        }
-      }
-
-      // ВЫЗОВ ВОРКЕРА ДЛЯ ПАКЕТНОЙ ОБРАБОТКИ
-      const promises = [];
-      if (updateDtos.length) {
-        promises.push(
-          rpcClient.call('batchRecords', {
-            type: 'update',
-            listName,
-            records: updateDtos,
-            token,
-            kingsApiBase: kingsApiBase
-          }).then(result => {
-            if (!result.success) {
-              handleBatchError(result, listName, 'update');
-              throw new Error(result.error);
-            }
-            return result;
-          })
-        );
-      }
-      if (createDtos.length) {
-        promises.push(
-          rpcClient.call('batchRecords', {
-            type: 'create',
-            listName,
-            records: createDtos,
-            token,
-            kingsApiBase: kingsApiBase
-          }).then(result => {
-            if (!result.success) {
-              handleBatchError(result, listName, 'create');
-              throw new Error(result.error);
-            }
-            return result;
-          })
-        );
-      }
-
-      if (promises.length > 0) {
-        await Promise.all(promises);
-      }
-
-      for (const r of createdRows) await paintManagerLockedColsOnRow(ws, r);
-
-    } catch (e) {
-      console.error('[univer-events] Batch processing failed:', e);
-    } finally {
-      for (const r of rowsFinal) processingRows.delete(keyFor(r));
-    }
-  }
-
-  // Новая функция для обработки ошибок батча
-  function handleBatchError(result: any, listName: string, type: 'create' | 'update') {
-    const toast = useToast();
-
-    if (result.code === 'CONFLICT' || result.code === 'SYNC_CONFLICT') {
-      toast.add({
-        title: 'Конфликт данных',
-        description: 'Данные были изменены другим пользователем. Пожалуйста, обновите страницу.',
-        color: 'error',
-        icon: 'i-lucide-alert-triangle',
-        duration: 5000
-      });
-    } else {
-      toast.add({
-        title: type === 'create' ? 'Ошибка создания' : 'Ошибка обновления',
-        description: result.message || 'Не удалось сохранить изменения',
-        color: 'error',
-        icon: 'i-lucide-alert-triangle',
-        duration: 4000
-      });
-    }
-  }
-
-  const isValidDate = (value: any): boolean => {
-    if (!value) return true;
-    const strValue = String(value).trim();
-    if (!strValue) return true;
-
-    const dateFormats = [
-      /^\d{4}-\d{2}-\d{2}$/,
-      /^\d{2}\.\d{2}\.\d{4}$/
-    ];
-
-    if (dateFormats.some(format => format.test(strValue))) {
-      const date = new Date(strValue);
-      return !isNaN(date.getTime());
-    }
-
-    if (/^\d+(\.\d+)?$/.test(strValue)) {
-      const num = Number(strValue);
-      if (num >= 25569) {
-        return true;
-      }
-    }
-
-    return false;
-  };
 
   const unwrapV = (x: any): any =>
     x && typeof x === "object" && "v" in x ? unwrapV(x.v) : x;
@@ -342,37 +99,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
     const d = new Date(s);
     return Number.isFinite(d.getTime()) ? tsToISO(d.getTime()) : null;
-  };
-
-  // Улучшенная функция нормализации чисел
-  const normalizeNumberStr = (raw: any): string => {
-    if (raw == null) return "";
-    const str = String(raw).trim();
-    if (!str) return "";
-
-    // Заменяем запятые на точки и убираем пробелы (разделители тысяч)
-    const normalized = str
-      .replace(/\s+/g, "") // убираем пробелы
-      .replace(/,/g, "."); // заменяем запятые на точки
-
-    // Проверяем, является ли результат валидным числом
-    if (/^[-+]?\d*\.?\d+$/.test(normalized)) {
-      return normalized;
-    }
-
-    return str; // возвращаем оригинал, если не удалось нормализовать
-  };
-
-  // Улучшенная проверка числовых значений
-  const isNumericOrEmpty = (v: any): boolean => {
-    if (v == null) return true;
-    const s = String(v).trim();
-    if (!s) return true;
-    if (s.startsWith("#")) return false;
-
-    // Нормализуем число перед проверкой
-    const normalized = normalizeNumberStr(s);
-    return /^[-+]?\d*\.?\d+$/.test(normalized) && Number.isFinite(Number(normalized));
   };
 
   // const highlightRow = (aws: any, row: number) => {
@@ -451,14 +177,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
     "id", // 27 AB
   ] as const;
 
-  // buildSR: нормализация дат и чисел
+  // buildSR: нормализация дат
   const buildSR = (rowVals: any[], listName: string, id: number = 0) => {
     const v = (i: number) => {
       if (dateCols.has(i)) {
         return normalizeDateInput(rowVals[i]) ?? "";
       } else if (NUMERIC_COLS.has(i)) {
         return normalizeNumberStr(toStr(rowVals[i]));
-      } else return toStr(rowVals[i])
+      } else return toStr(rowVals[i]);
     };
 
     return {
@@ -540,6 +266,15 @@ export function registerUniverEvents(univerAPI: FUniver) {
     return false;
   };
 
+  const isNumericOrEmpty = (v: any): boolean => {
+    if (v == null) return true;
+    const s = String(v).trim();
+    if (!s) return true;
+    if (s.startsWith("#")) return false;
+    if (typeof v === "number") return Number.isFinite(v);
+    return /^[-+]?\d+(?:\.\d+)?$/.test(s) && Number.isFinite(Number(s));
+  };
+
   // ====== СИНХ: UI <- SOCKET (удаление)
   const extractIdsFromDeleteMessage = (msg: any): number[] => {
     const out: number[] = [];
@@ -599,7 +334,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
       try {
         univerStore.beginQuiet?.();
-      } catch { }
+      } catch {}
       try {
         // оценим сколько строк сканировать по длине стора
         const storeLen = (sheetStore.records as any)?.[target]?.length ?? 0;
@@ -627,7 +362,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
       } finally {
         try {
           univerStore.endQuiet?.();
-        } catch { }
+        } catch {}
       }
     });
   });
@@ -660,7 +395,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (!lockedCells.length) return;
     try {
       univerStore.beginQuiet?.();
-    } catch { }
+    } catch {}
     try {
       for (const { row0, col0 } of lockedCells) {
         const prev = getPrevValueForCell(listName, row0, col0, store);
@@ -669,7 +404,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     } finally {
       try {
         univerStore.endQuiet?.();
-      } catch { }
+      } catch {}
     }
   };
 
@@ -686,7 +421,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
     if (me?.roleCode !== "ROLE_MANAGER") return;
     try {
       univerStore.beginQuiet?.();
-    } catch { }
+    } catch {}
     try {
       for (const col of MANAGER_LOCKED_COLUMNS) {
         if (col === 27) continue;
@@ -695,31 +430,34 @@ export function registerUniverEvents(univerAPI: FUniver) {
     } finally {
       try {
         univerStore.endQuiet?.();
-      } catch { }
+      } catch {}
     }
   };
 
   // ====== Вставка: до / после ======
+  const normalizeNumberStr = (raw: any): string =>
+    (raw ?? "").toString().replace(/\s+/g, "").replace(",", ".");
+
   const offBeforePaste = univerAPI.addEvent(
     univerAPI.Event.BeforeClipboardPaste,
     async (params: any) => {
       batchPasteInProgress = true;
       const wb = univerAPI.getActiveWorkbook();
       const aws = wb?.getActiveSheet();
-      const startCol = aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0;
+      const startCol =
+        aws?.getSelection()?.getActiveRange?.()?.getRange().startColumn ?? 0;
 
       let changed = false;
 
       const norm = (v: any, c: number) => {
-        const absoluteCol = startCol + c
+        const absoluteCol = startCol + c;
 
         if (dateCols.has(absoluteCol)) {
-          return normalizeDateInput(v) ?? v
+          return normalizeDateInput(v) ?? v;
         } else if (NUMERIC_COLS.has(absoluteCol)) {
-          return normalizeNumberStr(v)
-        } else return v
-      }
-
+          return normalizeNumberStr(v);
+        } else return v;
+      };
 
       if (typeof (params as any)?.text === "string") {
         const rows = ((params as any).text as string).split(/\r?\n/);
@@ -728,13 +466,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
             !line
               ? line
               : line
-                .split("\t")
-                .map((cell, i) => {
-                  const nv = norm(cell, i);
-                  if (nv !== cell) changed = true;
-                  return nv;
-                })
-                .join("\t")
+                  .split("\t")
+                  .map((cell, i) => {
+                    const nv = norm(cell, i);
+                    if (nv !== cell) changed = true;
+                    return nv;
+                  })
+                  .join("\t")
           )
           .join("\n");
         if (next !== (params as any).text) {
@@ -751,11 +489,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
           (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`
         );
 
-        // Нормализуем числа в HTML - заменяем запятые на точки
-        next = next.replace(
-          /(\d+),(\d+)/g,
-          (_m, int, dec) => `${int}.${dec}`
-        )
+        next = next.replace(/(\d+),(\d+)/g, (_m, int, dec) => `${int}.${dec}`);
 
         if (next !== prev) {
           (params as any).html = next;
@@ -772,7 +506,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
             (_m, dd, mm, yyyy) => `${yyyy}-${mm}-${dd}`
           );
 
-          // Нормализуем числа в HTML - заменяем запятые на точки
           next = next.replace(
             /(\d+),(\d+)/g,
             (_m, int, dec) => `${int}.${dec}`
@@ -788,10 +521,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
           data.cells = data.cells.map((row: any[]) =>
             Array.isArray(row)
               ? row.map((cell: any, i: number) => {
-                const nv = norm(cell, startCol + i);
-                if (nv !== cell) changed = true;
-                return nv;
-              })
+                  const nv = norm(cell, startCol + i);
+                  if (nv !== cell) changed = true;
+                  return nv;
+                })
               : row
           );
         }
@@ -801,10 +534,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
         (params as any).cells = (params as any).cells.map((row: any[]) =>
           Array.isArray(row)
             ? row.map((cell: any, i: number) => {
-              const nv = norm(cell, startCol + i);
-              if (nv !== cell) changed = true;
-              return nv;
-            })
+                const nv = norm(cell, startCol + i);
+                if (nv !== cell) changed = true;
+                return nv;
+              })
             : row
         );
       }
@@ -814,7 +547,6 @@ export function registerUniverEvents(univerAPI: FUniver) {
   const offPasted = univerAPI.addEvent(
     univerAPI.Event.ClipboardPasted,
     async () => {
-      batchPasteInProgress = true;
       const wb = univerAPI.getActiveWorkbook();
       const aws = wb?.getActiveSheet();
       const s = aws?.getSheet();
@@ -831,82 +563,54 @@ export function registerUniverEvents(univerAPI: FUniver) {
         const endRow = active.endRow;
         const startCol = active.startColumn;
         const endCol = active.endColumn;
+
         const listName = s.getName();
         const sheetStore = useSheetStore();
         const me = await getMe();
         const token = me?.token;
 
-        // Проверка блокировок для менеджера
         if (me?.roleCode === "ROLE_MANAGER") {
           for (let r = startRow; r <= endRow; r++) {
+            let locked = false;
             for (let c = startCol; c <= endCol; c++) {
               if (isCellLockedForManager(listName, r, c, sheetStore)) {
-                await univerAPI.undo();
-                batchPasteInProgress = false;
-                return;
+                locked = true;
+                break;
               }
+            }
+            if (locked) {
+              await univerAPI.undo();
+              return;
             }
           }
         }
 
-        const rowCount = endRow - startRow + 1;
+        const createDtos: any[] = [];
+        const updateDtos: any[] = [];
 
-        // Валидация вставленных данных перед обработкой
         try {
           univerStore.beginQuiet?.();
-          const validationRange = aws.getRange(startRow, 0, rowCount, 28);
-          const allValues = validationRange.getValues();
+          for (let r = startRow; r <= endRow; r++) {
+            for (let c = startCol; c <= endCol; c++) {
+              if (c === 27) continue;
 
-          let hasInvalidData = false;
-
-          for (let i = 0; i < rowCount; i++) {
-            const rowVals = allValues[i] ?? [];
-            for (let col = 0; col <= 26; col++) {
-              const value = toStr(rowVals[col]);
-              if (!value) continue;
-
-              // Для числовых колонок нормализуем значение перед проверкой
-              if (NUMERIC_COLS.has(col)) {
-                const normalizedValue = normalizeNumberStr(value);
-                if (!isNumericOrEmpty(normalizedValue)) {
-                  hasInvalidData = true;
-                  break;
-                }
-              }
-
-              if (dateCols.has(col) && !isValidDate(value)) {
-                hasInvalidData = true;
-                break;
-              }
+              const currentValue = aws.getRange(r, c).getValue();
+              aws
+                .getRange(r, c)
+                .setValue({
+                  v: currentValue?.v ?? currentValue,
+                })
+                .clearFormat();
             }
-            if (hasInvalidData) break;
           }
-
-          if (hasInvalidData) {
-            await univerAPI.undo();
-            useToast().add({
-              title: 'Неверный формат данных',
-              description: 'Вставлены невалидные данные. Изменения отменены.',
-              color: 'error',
-              icon: 'i-lucide-alert-triangle',
-              duration: 4000
-            });
-            batchPasteInProgress = false;
-            return;
-          }
+        } catch (e) {
+          console.error(e);
         } finally {
           univerStore.endQuiet?.();
         }
 
-        // Чтение данных после успешной валидации
-        const allRowValues = aws.getRange(startRow, 0, rowCount, 28).getValues();
-        const createDtos: any[] = [];
-        const updateDtos: any[] = [];
-
-        // Обработка строк
-        for (let i = 0; i < rowCount; i++) {
-          const row0 = startRow + i;
-          const rowVals = allRowValues[i] ?? [];
+        for (let r = startRow; r <= endRow; r++) {
+          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
 
           const idStr = toStr(rowVals[27]);
           let hasData = false;
@@ -920,163 +624,190 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
           if (idStr && Number.isFinite(Number(idStr)) && Number(idStr) > 0) {
             let dto = buildSR(rowVals, listName, Number(idStr));
-            if (me?.roleCode === 'ROLE_MANAGER') {
+            if (me?.roleCode === "ROLE_MANAGER") {
               const arr = (sheetStore.records as any)?.[listName];
-              const prevRec = Array.isArray(arr) ? arr[row0 - 1] : undefined;
-              dto = maskDtoForManager(dto, listName, row0, sheetStore, prevRec);
+              const prevRec = Array.isArray(arr) ? arr[r - 1] : undefined;
+              dto = maskDtoForManager(dto, listName, r, sheetStore, prevRec);
             }
             updateDtos.push(dto);
           } else if (hasData) {
             let createDto = buildSR(rowVals, listName);
-            if (me?.roleCode === 'ROLE_MANAGER') {
-              createDto = createManagerSafeDto(createDto, listName, row0, sheetStore);
+
+            if (!createDto.clientLead && me?.id) {
+              try {
+                const employeeStore = useEmployeeStore();
+                await employeeStore.fetchForLKById(me.id);
+                const userData = employeeStore.listForLKById;
+                if (userData?.object.fullName) {
+                  createDto.clientLead = userData.object.fullName; // Колонка W
+                }
+              } catch (error) {
+                console.error("Failed to fetch user data for new row:", error);
+              }
+            }
+            if (me?.roleCode === "ROLE_MANAGER") {
+              createDto = createManagerSafeDto(
+                createDto,
+                listName,
+                r,
+                sheetStore
+              );
             }
             createDtos.push(createDto);
           }
         }
-
-        // Пакетная отправка на сервер
-        const promises = [];
         if (createDtos.length > 0) {
-          promises.push(rpcClient.call('batchRecords', {
-            type: 'create',
+          await rpcClient.call("batchRecords", {
+            type: "create",
             listName,
             records: createDtos,
             token,
-            kingsApiBase: kingsApiBase
-          }));
+            kingsApiBase: kingsApiBase,
+          });
         }
         if (updateDtos.length > 0) {
-          promises.push(rpcClient.call('batchRecords', {
-            type: 'update',
+          await rpcClient.call("batchRecords", {
+            type: "update",
             listName,
             records: updateDtos,
             token,
-            kingsApiBase: kingsApiBase
-          }));
+            kingsApiBase: kingsApiBase,
+          });
         }
 
-        // Параллельное выполнение запросов
-        if (promises.length > 0) {
-          await Promise.all(promises);
-        }
-
-        // Оформление заблокированных колонок для менеджера
-        if (me?.roleCode === 'ROLE_MANAGER') {
+        if (me?.roleCode === "ROLE_MANAGER") {
           for (let r = startRow; r <= endRow; r++) {
             await paintManagerLockedColsOnRow(aws, r);
           }
         }
 
+        for (let r = startRow; r <= endRow; r++) {
+          const rowVals = aws.getRange(r, 0, 1, 28).getValues()?.[0] ?? [];
+          let hasData = false;
+          for (let c = 0; c <= 26; c++) {
+            if (toStr(rowVals[c])) {
+              hasData = true;
+              break;
+            }
+          }
+          // if (hasData || toStr(rowVals[27])) {
+          //   highlightRow(aws, r);
+          // }
+        }
       } catch (e) {
         console.error("[univer-events] paste handler failed:", e);
-        // В случае ошибки также откатываем изменения
-        try {
-          await univerAPI.undo();
-        } catch (undoError) {
-          console.error("Failed to undo after paste error:", undoError);
-        }
       } finally {
-        batchPasteInProgress = false;
+        setTimeout(() => {
+          batchPasteInProgress = false;
+        }, 100);
       }
     }
   );
 
   const PASTE_TRIGGERS = new Set([
-    'sheet.command.clipboard-paste',
-    'sheet.command.paste',
-    'sheet.command.paste-values',
-    'sheet.command.paste-formula',
-    'sheet.command.paste-all',
+    "sheet.command.clipboard-paste",
+    "sheet.command.paste",
+    "sheet.command.paste-values",
+    "sheet.command.paste-formula",
+    "sheet.command.paste-all",
   ]);
 
-  let timeoutId: NodeJS.Timeout
-  const debounceCheckKPP = (dataStream: string, column: number, row: number, worksheet: any) => {
-    clearTimeout(timeoutId)
+  let timeoutId: NodeJS.Timeout;
+  const debounceCheckKPP = (
+    dataStream: string,
+    column: number,
+    row: number,
+    worksheet: any
+  ) => {
+    clearTimeout(timeoutId);
     timeoutId = setTimeout(async () => {
-      await performKPPCheck(dataStream, column, row, worksheet)
-    }, 2000)
-  }
+      await performKPPCheck(dataStream, column, row, worksheet);
+    }, 2000);
+  };
 
-  const performKPPCheck = async (dataStream: string, column: number, row: number, worksheet: any) => {
+  const performKPPCheck = async (
+    dataStream: string,
+    column: number,
+    row: number,
+    worksheet: any
+  ) => {
     const toast = useToast();
     try {
-      const cleanKPP = dataStream.replace(/[^\d]/g, '')
+      const cleanKPP = dataStream.replace(/[^\d]/g, "");
       const result = await checkKPP(cleanKPP);
       if (result.suggestions.length === 0) {
         if (column === 7) {
           toast.add({
-            title: 'ИНН клиента не найден',
-            icon: 'i-lucide-x',
-            color: 'error'
+            title: "ИНН клиента не найден",
+            icon: "i-lucide-x",
+            color: "error",
           });
         } else {
           toast.add({
-            title: 'ИНН подрядчика не найден',
-            icon: 'i-lucide-x',
-            color: 'error'
+            title: "ИНН подрядчика не найден",
+            icon: "i-lucide-x",
+            color: "error",
           });
         }
       } else {
-        const suggestions = result.suggestions[0]
-        const companyName = suggestions.value.replace(/"/g, '')
-        const inn = suggestions.data.inn
-        const kpp = suggestions.data.kpp
+        const suggestions = result.suggestions[0];
+        const companyName = suggestions.value.replace(/"/g, "");
+        const inn = suggestions.data.inn;
+        const kpp = suggestions.data.kpp;
 
-        const newValue = `${companyName} ИНН ${inn}`
+        const newValue = `${companyName} ИНН ${inn}`;
 
         try {
-          univerStore.beginQuiet?.()
-          worksheet.getRange(row, column).setValue({ v: newValue })
+          univerStore.beginQuiet?.();
+          worksheet.getRange(row, column).setValue({ v: newValue });
         } catch (e) {
-          console.error(e)
+          console.error(e);
         } finally {
-          univerStore.endQuiet?.()
+          univerStore.endQuiet?.();
         }
       }
     } catch (error) {
-      console.error('Error checking KPP:', error);
+      console.error("Error checking KPP:", error);
     }
   };
 
-  const offEditChanging = univerAPI.addEvent(univerAPI.Event.SheetEditChanging, async (params: any) => {
-    if (params.column === 7 || params.column === 13) {
-      const dataStream = params.value._data.body.dataStream
+  const offEditChanging = univerAPI.addEvent(
+    univerAPI.Event.SheetEditChanging,
+    async (params: any) => {
+      if (params.column === 7 || params.column === 13) {
+        const dataStream = params.value._data.body.dataStream;
 
-      if (dataStream) {
-        const ws = params.worksheet
-        const row = params.row
-        const column = params.column
+        if (dataStream) {
+          const ws = params.worksheet;
+          const row = params.row;
+          const column = params.column;
 
-        debounceCheckKPP(dataStream, column, row, ws)
+          debounceCheckKPP(dataStream, column, row, ws);
+        }
       }
-    }
 
-    // Автоматическая нормализация чисел при редактировании
-    if (NUMERIC_COLS.has(params.column)) {
-      const dataStream = params.value._data.body.dataStream
-      if (dataStream) {
-        // Нормализуем число - заменяем запятые на точки
-        const normalized = normalizeNumberStr(dataStream)
-        if (normalized !== dataStream) {
-          params.value._data.body.dataStream = normalized
+      if (NUMERIC_COLS.has(params.column)) {
+        const dataStream = params.value._data.body.dataStream;
+        if (dataStream && dataStream.includes(",")) {
+          params.value._data.body.dataStream = dataStream.replace(/,/g, ".");
         }
       }
     }
-  })
+  );
 
   const offValueChanged = univerAPI.addEvent(
     univerAPI.Event.SheetValueChanged,
     async (params: any) => {
       // Guards
-      if (batchPasteInProgress) return;
       if (univerStore.isQuiet?.() ?? univerStore.batchProgress) return;
-      if (externalUpdateInProgress) return; // ← НОВЫЙ GUARD - защита от внешних обновлений
+      if (batchPasteInProgress) return;
 
-      const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? '';
+      const trigger = params?.trigger ?? params?.payload?.params?.trigger ?? "";
 
       // Пропускаем явные вставки — у них свой пайплайн
-      if (PASTE_TRIGGERS.has(trigger) || trigger.includes('paste') || trigger.includes('clipboard')) return;
+      if (PASTE_TRIGGERS.has(trigger) || trigger.includes("paste")) return;
+
+      if (batchPasteInProgress) return;
 
       const wb = univerAPI.getActiveWorkbook();
       const ws = wb?.getActiveSheet();
@@ -1094,10 +825,10 @@ export function registerUniverEvents(univerAPI: FUniver) {
         params?.cellValue ?? pparams?.cellValue ?? payload?.cellValue;
 
       // Если move-range и cv нет — синтезируем из целевого диапазона
-      const isMoveRange = trigger === 'sheet.command.move-range';
+      const isMoveRange = trigger === "sheet.command.move-range";
       if ((!cv || Object.keys(cv).length === 0) && isMoveRange) {
         const normRange = (r: any) => {
-          if (!r || typeof r !== 'object') return null;
+          if (!r || typeof r !== "object") return null;
           const sr = Number(r.startRow ?? r.rowStart ?? r.row ?? r.r1);
           const sc = Number(r.startColumn ?? r.colStart ?? r.column ?? r.c1);
           const er = Number(r.endRow ?? r.rowEnd ?? r.r2);
@@ -1106,17 +837,37 @@ export function registerUniverEvents(univerAPI: FUniver) {
           const cc = Number(r.columnCount ?? r.cols ?? r.columns);
           if (Number.isFinite(sr) && Number.isFinite(sc)) {
             if (Number.isFinite(rc) && Number.isFinite(cc)) {
-              return { startRow: sr, startColumn: sc, rowCount: rc, columnCount: cc };
+              return {
+                startRow: sr,
+                startColumn: sc,
+                rowCount: rc,
+                columnCount: cc,
+              };
             }
             if (Number.isFinite(er) && Number.isFinite(ec)) {
-              return { startRow: sr, startColumn: sc, rowCount: er - sr + 1, columnCount: ec - sc + 1 };
+              return {
+                startRow: sr,
+                startColumn: sc,
+                rowCount: er - sr + 1,
+                columnCount: ec - sc + 1,
+              };
             }
           }
           return null;
         };
 
-        const srcRaw = pparams.sourceRange ?? pparams.fromRange ?? pparams.source ?? pparams.srcRange ?? pparams.range;
-        const dstRaw = pparams.targetRange ?? pparams.toRange ?? pparams.target ?? pparams.destRange ?? pparams.destination;
+        const srcRaw =
+          pparams.sourceRange ??
+          pparams.fromRange ??
+          pparams.source ??
+          pparams.srcRange ??
+          pparams.range;
+        const dstRaw =
+          pparams.targetRange ??
+          pparams.toRange ??
+          pparams.target ??
+          pparams.destRange ??
+          pparams.destination;
         const dstNorm = normRange(dstRaw);
 
         let target = dstNorm;
@@ -1127,12 +878,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
             startRow: Number(ar.startRow ?? 0),
             startColumn: Number(ar.startColumn ?? 0),
             rowCount: Number(ar.endRow - ar.startRow + 1),
-            columnCount: Number(ar.endColumn - ar.startColumn + 1)
+            columnCount: Number(ar.endColumn - ar.startColumn + 1),
           };
         }
 
         const { startRow, startColumn, rowCount, columnCount } = target;
-        const values = ws.getRange(startRow, startColumn, rowCount, columnCount).getValues();
+        const values = ws
+          .getRange(startRow, startColumn, rowCount, columnCount)
+          .getValues();
         const synthetic: Record<string, Record<string, any>> = {};
 
         for (let r = 0; r < rowCount; r++) {
@@ -1141,7 +894,7 @@ export function registerUniverEvents(univerAPI: FUniver) {
           for (let c = 0; c < columnCount; c++) {
             const colIdx = startColumn + c;
             const v = unwrapV(rowArr?.[c]);
-            if (String(v ?? '').trim() !== '') {
+            if (String(v ?? "").trim() !== "") {
               (synthetic[String(rowIdx)] ??= {})[String(colIdx)] = { v };
             }
           }
@@ -1150,9 +903,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
         cv = synthetic;
       }
 
+      if (!cv || Object.keys(cv).length === 0) return;
+
       // AUTO-FILL: копируем seed из ячейки-источника, без инкремента
-      if (trigger === 'sheet.command.auto-fill') {
-        const rowIndexes = Object.keys(cv).map(Number).sort((a, b) => a - b);
+      if (trigger === "sheet.command.auto-fill") {
+        const rowIndexes = Object.keys(cv)
+          .map(Number)
+          .sort((a, b) => a - b);
         const colSet = new Set<number>();
         for (const r of rowIndexes) {
           for (const ck of Object.keys(cv[String(r)] ?? {})) {
@@ -1181,15 +938,22 @@ export function registerUniverEvents(univerAPI: FUniver) {
           for (const col of colIndexes) {
             let seed: any;
             if (isVertical) {
-              seed = (minRow - 1 >= 0 && readSeed(minRow - 1, col)) ?? readSeed(maxRow + 1, col);
+              seed =
+                (minRow - 1 >= 0 && readSeed(minRow - 1, col)) ??
+                readSeed(maxRow + 1, col);
             } else {
-              seed = (minCol - 1 >= 0 && readSeed(rowIndexes[0], minCol - 1)) ?? readSeed(rowIndexes[0], maxCol + 1);
+              seed =
+                (minCol - 1 >= 0 && readSeed(rowIndexes[0], minCol - 1)) ??
+                readSeed(rowIndexes[0], maxCol + 1);
             }
-            if (seed === undefined) seed = unwrapV(cv[String(minRow)]?.[String(col)]?.v);
+            if (seed === undefined)
+              seed = unwrapV(cv[String(minRow)]?.[String(col)]?.v);
             seedsByCol.set(col, seed);
           }
 
-          try { univerStore.beginQuiet?.(); } catch { }
+          try {
+            univerStore.beginQuiet?.();
+          } catch {}
           try {
             for (const r of rowIndexes) {
               for (const col of colIndexes) {
@@ -1198,11 +962,13 @@ export function registerUniverEvents(univerAPI: FUniver) {
                 (cv[String(r)] ??= {})[String(col)] = { v: seed };
               }
             }
-          } finally { try { univerStore.endQuiet?.(); } catch { } }
+          } finally {
+            try {
+              univerStore.endQuiet?.();
+            } catch {}
+          }
         }
       }
-
-      if (!cv || Object.keys(cv).length === 0) return;
 
       // Собираем изменённые ячейки из cv
       const perRowRaw = new Map<number, Set<number>>();
@@ -1213,12 +979,14 @@ export function registerUniverEvents(univerAPI: FUniver) {
         for (const ck of Object.keys(rowObj)) {
           const col0 = Number(ck);
           if (!Number.isFinite(col0) || col0 === 27) continue; // AB (ID) не редактируем
-          (perRowRaw.get(row0) ?? perRowRaw.set(row0, new Set()).get(row0)!).add(col0);
+          (
+            perRowRaw.get(row0) ?? perRowRaw.set(row0, new Set()).get(row0)!
+          ).add(col0);
         }
       }
       if (perRowRaw.size === 0) return;
 
-      const listName = sheet.getName?.() || '';
+      const listName = sheet.getName?.() || "";
       const store = useSheetStore();
       const me = await getMe();
       const token = me?.token;
@@ -1228,21 +996,22 @@ export function registerUniverEvents(univerAPI: FUniver) {
       const lockedCells: Array<{ row0: number; col0: number }> = [];
       const perRowAllowed = new Map<number, Set<number>>();
 
-      if (me?.roleCode === 'ROLE_MANAGER') {
+      if (me?.roleCode === "ROLE_MANAGER") {
         for (const [row0, cols] of perRowRaw) {
           const allowed = new Set<number>();
           for (const col0 of cols) {
-            const isLocked = isCellLockedForManager(listName, row0, col0, store);
-
-            // Автоматическая нормализация чисел для менеджера
-            if (NUMERIC_COLS.has(col0)) {
-              const v = cv[String(row0)]?.[String(col0)]?.v
-              if (typeof v === 'string') {
-                const normalized = normalizeNumberStr(v)
-                if (normalized !== v) {
-                  ws.getRange(row0, col0).setValue({ v: normalized });
-                  (cv[String(row0)] ??= {})[String(col0)] = { v: normalized }
-                }
+            const isLocked = isCellLockedForManager(
+              listName,
+              row0,
+              col0,
+              store
+            );
+            if (!NUMERIC_COLS.has(col0)) {
+              const v = cv[String(row0)]?.[String(col0)]?.v;
+              if (typeof v === "string" && v.includes(",")) {
+                const normalized = normalizeNumberStr(v);
+                ws.getRange(row0, col0).setValue({ v: normalized });
+                (cv[String(row0)] ??= {})[String(col0)] = { v: normalized };
               }
             }
 
@@ -1261,46 +1030,81 @@ export function registerUniverEvents(univerAPI: FUniver) {
         }
       }
 
-      const perRow = me?.roleCode === 'ROLE_MANAGER' ? perRowAllowed : perRowRaw;
+      const perRow =
+        me?.roleCode === "ROLE_MANAGER" ? perRowAllowed : perRowRaw;
 
       if (perRow.size === 0) {
-        return
+        return;
       }
 
-      // ВАЛИДАЦИЯ ЧИСЛОВЫХ КОЛОНОК И ДАТ
+      // Валидация числовых колонок
       {
         const getOld = (rec: TransportAccounting, col0: number) =>
           (rec as any)?.[COL_TO_KEY[col0] as keyof TransportAccounting];
 
-        let hasInvalidData = false
-        const invalidCells: Array<{ row0: number, col0: number, hadPreviousData: boolean }> = []
+        const isValidDate = (value: any): boolean => {
+          if (!value) return true;
+          const strValue = String(value).trim();
+          if (!strValue) return true;
+
+          const dateFormats = [/^\d{4}-\d{2}-\d{2}$/, /^\d{2}\.\d{2}\.\d{4}&/];
+
+          if (dateFormats.some((format) => format.test(strValue))) {
+            const date = new Date(strValue);
+            return !isNaN(date.getTime());
+          }
+
+          if (/^\d+(\.\d+)?$/.test(strValue)) {
+            const num = Number(strValue);
+            if (num >= 25569) {
+              return true;
+            }
+          }
+
+          return false;
+        };
+
+        let hasInvalidData = false;
+        const invalidCells: Array<{
+          row0: number;
+          col0: number;
+          hadPreviousData: boolean;
+        }> = [];
 
         for (const [row0, cols] of perRow) {
           for (const col0 of cols) {
-            const newValue = cv[String(row0)]?.[String(col0)]?.v
-            const stringValue = String(newValue ?? '').trim()
+            const newValue = cv[String(row0)]?.[String(col0)]?.v;
+            const stringValue = String(newValue ?? "").trim();
 
-            if (NUMERIC_COLS.has(col0) && stringValue !== '') {
-              // Нормализуем значение перед проверкой
-              const normalizedValue = normalizeNumberStr(newValue);
-              if (!isNumericOrEmpty(normalizedValue)) {
-                const prevRec = Array.isArray(store.records[listName]) ? store.records[listName][row0 - 1] : undefined
-                const prevValue = prevRec ? getOld(prevRec, col0) : null
-                const hadPreviousData = prevValue !== null && prevValue !== undefined && String(prevValue).trim() !== ''
+            if (NUMERIC_COLS.has(col0) && stringValue !== "") {
+              if (!isNumericOrEmpty(newValue)) {
+                const prevRec = Array.isArray(store.records[listName])
+                  ? store.records[listName][row0 - 1]
+                  : undefined;
+                const prevValue = prevRec ? getOld(prevRec, col0) : null;
+                const hadPreviousData =
+                  prevValue !== null &&
+                  prevValue !== undefined &&
+                  String(prevValue).trim() !== "";
 
-                invalidCells.push({ row0, col0, hadPreviousData })
-                hasInvalidData = true
+                invalidCells.push({ row0, col0, hadPreviousData });
+                hasInvalidData = true;
               }
             }
 
-            if (dateCols.has(col0) && stringValue !== '') {
+            if (dateCols.has(col0) && stringValue !== "") {
               if (!isValidDate(newValue)) {
-                const prevRec = Array.isArray(store.records[listName]) ? store.records[listName][row0 - 1] : undefined
-                const prevValue = prevRec ? getOld(prevRec, col0) : null
-                const hadPreviousData = prevValue !== null && prevValue !== undefined && String(prevValue).trim() !== ''
+                const prevRec = Array.isArray(store.records[listName])
+                  ? store.records[listName][row0 - 1]
+                  : undefined;
+                const prevValue = prevRec ? getOld(prevRec, col0) : null;
+                const hadPreviousData =
+                  prevValue !== null &&
+                  prevValue !== undefined &&
+                  String(prevValue).trim() !== "";
 
-                invalidCells.push({ row0, col0, hadPreviousData })
-                hasInvalidData = true
+                invalidCells.push({ row0, col0, hadPreviousData });
+                hasInvalidData = true;
               }
             }
           }
@@ -1308,150 +1112,305 @@ export function registerUniverEvents(univerAPI: FUniver) {
 
         if (hasInvalidData) {
           try {
-            univerStore.beginQuiet?.()
-            await univerAPI.undo()
-          } catch { }
+            univerStore.beginQuiet?.();
+          } catch {}
 
           try {
-            const cellsWithPreviousData = invalidCells.filter(c => c.hadPreviousData)
-            const cellsWithoutData = invalidCells.filter(c => !c.hadPreviousData)
+            const cellsWithPreviousData = invalidCells.filter(
+              (c) => c.hadPreviousData
+            );
+            const cellsWithoutData = invalidCells.filter(
+              (c) => !c.hadPreviousData
+            );
 
             if (cellsWithPreviousData.length > 0) {
-              const numericInvalid = cellsWithPreviousData.filter(c => NUMERIC_COLS.has(c.col0))
-              const dateInvalid = cellsWithPreviousData.filter(c => dateCols.has(c.col0))
+              const numericInvalid = cellsWithPreviousData.filter((c) =>
+                NUMERIC_COLS.has(c.col0)
+              );
+              const dateInvalid = cellsWithPreviousData.filter((c) =>
+                dateCols.has(c.col0)
+              );
 
-              let errorMessage = 'Обнаружены неверные данные'
+              univerAPI.undo();
+
+              let errorMessage = "Обнаружены неверные данные";
               if (numericInvalid.length > 0) {
-                errorMessage += ` в числовых колонках (строки: ${[...new Set(numericInvalid.map(cell => cell.row0 + 1))].join(', ')});`;
+                errorMessage += ` в числовых колонках (строки: ${[
+                  ...new Set(numericInvalid.map((cell) => cell.row0 + 1)),
+                ].join(", ")});`;
               }
               if (dateInvalid.length > 0) {
-                errorMessage += ` в колонках с датами (строки: ${[...new Set(dateInvalid.map(cell => cell.row0 + 1))].join(', ')});`;
+                errorMessage += ` в колонках с датами (строки: ${[
+                  ...new Set(dateInvalid.map((cell) => cell.row0 + 1)),
+                ].join(", ")});`;
               }
-              errorMessage += ' Изменения отменены.'
+              errorMessage += " Изменения отменены.";
 
               useToast().add({
-                title: 'Неверный формат данных',
+                title: "Неверный формат данных",
                 description: errorMessage,
-                color: 'error',
-                icon: 'i-lucide-alert-triangle',
-                duration: 4000
-              })
+                color: "error",
+                icon: "i-lucide-alert-triangle",
+                duration: 4000,
+              });
             }
 
             if (cellsWithoutData.length > 0) {
               for (const { row0, col0 } of cellsWithoutData) {
-                ws.getRange(row0, col0).setValue({ v: '' });
+                ws.getRange(row0, col0).setValue({ v: "" });
               }
 
               useToast().add({
-                title: 'Неверный формат данных',
-                description: 'Введены неверные данные в пустые ячейки. Ячейки очищены.',
-                color: 'warning',
-                icon: 'i-lucide-info',
+                title: "Неверный формат данных",
+                description:
+                  "Введены неверные данные в пустые ячейки. Ячейки очищены.",
+                color: "warning",
+                icon: "i-lucide-info",
                 duration: 3000,
               });
             }
           } finally {
             try {
-              univerStore.endQuiet?.()
-            } catch { }
+              univerStore.endQuiet?.();
+            } catch {}
           }
 
-          // ВАЖНО: Выходим из функции после отмены изменений
-          return
+          if (invalidCells.some((cell) => cell.hadPreviousData)) {
+            return;
+          }
         }
       }
 
-      // НОВАЯ ЛОГИКА: ДОБАВЛЕНИЕ ИЗМЕНЕНИЙ В ОЧЕРЕДЬ ВМЕСТО НЕМЕДЛЕННОЙ ОБРАБОТКИ
+      // Список строк для обработки
+      const allowCreate = !isMoveRange;
+      const arrAll = (store.records as any)?.[listName] as
+        | TransportAccounting[]
+        | undefined;
+      const getOld = (rec: TransportAccounting, col0: number) =>
+        (rec as any)?.[COL_TO_KEY[col0] as keyof TransportAccounting];
+      const isNonEmpty = (v: any) => String(v ?? "").trim() !== "";
+
+      const rowsToProcess: number[] = [];
       for (const [row0, cols] of perRow) {
-        for (const col0 of cols) {
-          const changeKey = `${listName}#${row0}`;
-          const existing = pendingChanges.get(changeKey);
+        const prevRec = Array.isArray(arrAll) ? arrAll[row0 - 1] : undefined;
 
-          if (existing) {
-            existing.cols.add(col0);
-            existing.timestamp = Date.now();
-          } else {
-            pendingChanges.set(changeKey, {
-              row0,
-              cols: new Set([col0]),
-              timestamp: Date.now()
-            });
+        if (isMoveRange) {
+          let hasNonEmpty = false;
+          for (const c of cols) {
+            const v = cv[String(row0)]?.[String(c)]?.v;
+            if (isNonEmpty(v)) {
+              hasNonEmpty = true;
+              break;
+            }
+          }
+          if (hasNonEmpty) rowsToProcess.push(row0);
+          continue;
+        }
+
+        if (!prevRec) {
+          let nonEmpty = false;
+          for (const c of cols) {
+            const v = cv[String(row0)]?.[String(c)]?.v;
+            if (isNonEmpty(v)) {
+              nonEmpty = true;
+              break;
+            }
+          }
+          if (nonEmpty) rowsToProcess.push(row0);
+          continue;
+        }
+
+        let changed = false;
+        for (const c of cols) {
+          const nv = cv[String(row0)]?.[String(c)]?.v;
+          const old = getOld(prevRec, c);
+          if (String(nv ?? "").trim() !== String(old ?? "").trim()) {
+            changed = true;
+            break;
           }
         }
+        if (changed) rowsToProcess.push(row0);
       }
+      if (!rowsToProcess.length) return;
 
-      // Сбрасываем таймер и планируем обработку с DEBOUNCE
-      clearTimeout(valueChangeTimeout);
-      valueChangeTimeout = setTimeout(() => {
-        processPendingChanges();
-      }, DEBOUNCE_DELAY);
+      // Исключаем строки, уже в обработке
+      const keyFor = (r: number) => `${listName}#${r}`;
+      const rowsFinal = rowsToProcess.filter((r) => {
+        const k = keyFor(r);
+        const busy = processingRows.has(k);
+        if (!busy) processingRows.add(k);
+        return !busy;
+      });
+      if (!rowsFinal.length) return;
+
+      // Формируем DTO и отправляем в воркер
+      const createDtos: any[] = [];
+      const updateDtos: any[] = [];
+      const createdRows: number[] = [];
+
+      try {
+        for (const row0 of rowsFinal) {
+          const rowVals = ws.getRange(row0, 0, 1, 28).getValues()?.[0] ?? [];
+          const cols = perRow.get(row0)!;
+
+          for (const c of cols) {
+            const vFromPayload = cv[String(row0)]?.[String(c)]?.v;
+            rowVals[c] =
+              rowVals[c] && typeof rowVals[c] === "object" && "v" in rowVals[c]
+                ? { ...rowVals[c], v: vFromPayload }
+                : { v: vFromPayload };
+          }
+
+          // ID: сначала из листа, затем fallback к стору (важно для move-range)
+          let idStr = String(rowVals?.[27]?.v ?? rowVals?.[27] ?? "").trim();
+          let idNum = Number(idStr);
+          if (!Number.isFinite(idNum) || idNum <= 0) {
+            const prevRecAtRow = Array.isArray(arrAll)
+              ? arrAll[row0 - 1]
+              : undefined;
+            const prevId = Number(prevRecAtRow?.id);
+            if (Number.isFinite(prevId) && prevId > 0) idNum = prevId;
+          }
+
+          const prevRec = Array.isArray(arrAll) ? arrAll[row0 - 1] : undefined;
+
+          if (Number.isFinite(idNum) && idNum > 0) {
+            let dto = { ...buildSR(rowVals, listName, idNum), id: idNum };
+            if (me?.roleCode === "ROLE_MANAGER") {
+              dto = maskDtoForManager(dto, listName, row0, store, prevRec);
+            }
+            updateDtos.push(dto);
+          } else {
+            if (!allowCreate) continue;
+            if (rowHasData(rowVals)) {
+              let createDto = buildSR(rowVals, listName);
+              if (me?.id) {
+                try {
+                  const employeeStore = useEmployeeStore();
+                  await employeeStore.fetchForLKById(me.id);
+                  const userData = employeeStore.listForLKById;
+                  if (userData?.object.fullName) {
+                    createDto.clientLead = userData.object.fullName; // Колонка W
+                  }
+                } catch (error) {
+                  console.error(
+                    "Failed to fetch user data for new row:",
+                    error
+                  );
+                }
+              }
+              if (me?.roleCode === "ROLE_MANAGER") {
+                createDto = createManagerSafeDto(
+                  createDto,
+                  listName,
+                  row0,
+                  store
+                );
+              }
+              createDtos.push(createDto);
+              createdRows.push(row0);
+            }
+          }
+        }
+
+        // ВЫЗОВ ВОРКЕРА ДЛЯ ПАКЕТНОЙ ОБРАБОТКИ
+        if (updateDtos.length) {
+          try {
+            await rpcClient.call("batchRecords", {
+              type: "update",
+              listName,
+              records: updateDtos,
+              token,
+              kingsApiBase: kingsApiBase,
+            });
+          } catch (e) {}
+        }
+        if (createDtos.length) {
+          try {
+            await rpcClient.call("batchRecords", {
+              type: "create",
+              listName,
+              records: createDtos,
+              token,
+              kingsApiBase: kingsApiBase,
+            });
+          } catch (e) {}
+        }
+
+        for (const r of createdRows) await paintManagerLockedColsOnRow(ws, r);
+
+        // const aws = wb.getActiveSheet();
+        // for (const r of rowsFinal) highlightRow(aws, r);
+      } catch (e) {
+      } finally {
+        for (const r of rowsFinal) processingRows.delete(keyFor(r));
+      }
     }
   );
 
-  const offClipboardChanged = univerAPI.addEvent(univerAPI.Event.ClipboardChanged, async (params: any) => {
-    const startRow = params.fromRange._range.startRow
-    const endRow = params.fromRange._range.endRow
+  const offClipboardChanged = univerAPI.addEvent(
+    univerAPI.Event.ClipboardChanged,
+    async (params: any) => {
+      const startRow = params.fromRange._range.startRow;
+      const endRow = params.fromRange._range.endRow;
 
-    if (!startRow || !endRow) return
+      if (!startRow || !endRow) return;
 
-    const me = getUser()
+      const me = getUser();
 
-    if (me?.roleCode === 'ROLE_ADMIN' || me?.roleCode === 'ROLE_BUH') return
+      if (me?.roleCode === "ROLE_ADMIN" || me?.roleCode === "ROLE_BUH") return;
 
-    const toast = useToast()
+      const toast = useToast();
 
-    if (endRow - startRow >= 10) {
-      toast.add({
-        title: 'Копирование больше 10 строк',
-        description: 'Вам запрещено копировать больше 10 строк за раз. Обратитесь к администратору.',
-        color: 'error',
-        icon: 'i-lucide-alert-triangle'
-      })
-      params.text = ''
-      params.html = ''
+      if (endRow - startRow >= 10) {
+        toast.add({
+          title: "Копирование больше 10 строк",
+          description:
+            "Вам запрещено копировать больше 10 строк за раз. Обратитесь к администратору.",
+          color: "error",
+          icon: "i-lucide-alert-triangle",
+        });
+        params.text = "";
+        params.html = "";
 
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText('')
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText("");
+          } else if (document.execCommand) {
+            const textArea = document.createElement("textarea");
+            textArea.value = "";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            document.execCommand("copy");
+            document.body.removeChild(textArea);
+          }
+        } catch (e) {
+          console.error(e);
         }
-
-        else if (document.execCommand) {
-          const textArea = document.createElement('textarea');
-          textArea.value = ''
-          document.body.appendChild(textArea);
-          textArea.focus();
-          textArea.select();
-          document.execCommand('copy');
-          document.body.removeChild(textArea);
-        }
-      } catch (e) {
-        console.error(e)
       }
     }
-  });
-
-  (window as any).applyExternalUpdate = applyExternalUpdate
+  );
 
   // ====== Disposer ======
   return () => {
     try {
       (offBeforePaste as any)?.dispose?.();
-    } catch { }
+    } catch {}
     try {
       (offPasted as any)?.dispose?.();
-    } catch { }
+    } catch {}
     try {
       (offEditChanging as any)?.dispose?.();
-    } catch { }
+    } catch {}
     try {
       (offValueChanged as any)?.dispose?.();
-    } catch { }
+    } catch {}
     try {
       offAction?.();
-    } catch { }
+    } catch {}
     try {
       (offClipboardChanged as any)?.dispose?.();
-    } catch { }
-  }
+    } catch {}
+  };
 }
