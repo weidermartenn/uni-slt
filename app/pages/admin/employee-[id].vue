@@ -12,6 +12,14 @@
 
         <!-- Основной контент -->
         <div v-else-if="userData?.operationResult === 'OK'" class="space-y-6" ref="contentGroup">
+          <UButton
+          icon="i-lucide-arrow-left"
+          variant="ghost"
+          color="neutral"
+          @click="$router.back()"
+          >
+            Вернуться
+          </UButton>
           <!-- Шапка профиля с редактированием -->
           <UCard class="overflow-hidden border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-all duration-300 dark:bg-gray-800">
             <div class="flex items-start justify-between">
