@@ -44,7 +44,11 @@ export default defineNuxtConfig({
     build: {
       sourcemap: false, cssMinify: true,
       rollupOptions: {
-        external : ['/workers/api-worker.js'],
+        external : [
+          '/workers/api-worker.js',
+          'node_modules/vue-file-toolbar-menu',
+          'node_modules/vue-document-editor'
+        ],
         output: {
           manualChunks: {
             'vue-vendor': ['vue', '@vue/shared', '@vue/runtime-core', '@vue/runtime-dom'],
