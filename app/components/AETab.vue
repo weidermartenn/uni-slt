@@ -247,7 +247,7 @@ const deleting = ref(false)
 
 // Данные из стора
 const employees = computed<User[]>(() =>
-  (aeiStore.employeesAllInfo || []).filter((emp: any) => (emp?.fullName != null || emp?.name != null) && emp?.confirmed === true)
+  (aeiStore.employeesAllInfo || []).filter((emp: any) => (emp?.fullName != null || emp?.name != null))
 )
 
 // Опции ролей
