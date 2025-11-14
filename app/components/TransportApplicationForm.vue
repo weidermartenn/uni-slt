@@ -1,18 +1,9 @@
 <template>
-  <div class="transport-application-form" :class="{ 'document-mode': documentMode }">
-    <div class="form-header" v-if="!documentMode">
-      <h2>Договор-заявка на перевозку груза</h2>
-      <div class="form-actions" v-if="mode === 'editable'">
-        <button @click="saveForm" class="btn btn-primary">Сохранить</button>
-        <button @click="resetForm" class="btn btn-secondary">Сбросить</button>
-        <button @click="printForm" class="btn btn-outline">Печать</button>
-      </div>
-    </div>
-
-    <div class="document-content">
+  <div class="transport-application">
+    <div class="document">
       <!-- Шапка документа -->
       <div class="header">
-        <h3>Транспортная компания Общество с ограниченной ответственностью «СИСТЕМ ЛОДЖИСТИКС»</h3>
+        <h2>Транспортная компания Общество с ограниченной ответственностью «СИСТЕМ ЛОДЖИСТИКС»</h2>
         <p>ИНН 7805717259</p>
         
         <div class="addresses">
@@ -49,34 +40,31 @@
               <td>
                 <label>Адрес:</label>
                 <input type="text" v-model="form.loading.address" 
-                       :readonly="mode === 'readonly'">
+                       value="by CMR RU RUS servis terminal KRIEVJJA (Терехово-Бурачки)" readonly>
               </td>
               <td>
                 <label>Дата:</label>
-                <input type="date" v-model="form.loading.date" 
-                       :disabled="mode === 'readonly'">
+                <input type="date" v-model="form.loading.date">
               </td>
               <td>
                 <label>Адрес:</label>
                 <input type="text" v-model="form.unloading.address" 
-                       :readonly="mode === 'readonly'">
+                       value="by CMR +Возврат прицепа в МАП ТереховоКурачки в течении 5 дней" readonly>
               </td>
               <td>
                 <label>Дата:</label>
-                <input type="date" v-model="form.unloading.date" 
-                       :disabled="mode === 'readonly'">
+                <input type="date" v-model="form.unloading.date">
               </td>
             </tr>
             <tr>
               <td colspan="2">
                 <label>Время:</label>
                 <input type="text" v-model="form.loading.time" 
-                       :readonly="mode === 'readonly'">
+                       value="Документы на таможню подать до 9 утра">
               </td>
               <td colspan="2">
                 <label>Время:</label>
-                <input type="text" v-model="form.unloading.time" 
-                       :readonly="mode === 'readonly'">
+                <input type="text" v-model="form.unloading.time">
               </td>
             </tr>
           </tbody>
@@ -96,12 +84,12 @@
           </thead>
           <tbody>
             <tr>
-              <td><input type="text" v-model="form.cargo.name" :readonly="mode === 'readonly'"></td>
-              <td><input type="text" v-model="form.cargo.quantity" :readonly="mode === 'readonly'"></td>
-              <td><input type="number" v-model="form.cargo.weight" step="0.01" :readonly="mode === 'readonly'"></td>
-              <td><input type="number" v-model="form.cargo.volume" step="0.01" :readonly="mode === 'readonly'"></td>
-              <td><input type="text" v-model="form.cargo.transportType" :readonly="mode === 'readonly'"></td>
-              <td><input type="text" v-model="form.cargo.equipment" :readonly="mode === 'readonly'"></td>
+              <td><input type="text" v-model="form.cargo.name"></td>
+              <td><input type="text" v-model="form.cargo.quantity"></td>
+              <td><input type="number" v-model="form.cargo.weight" step="0.01"></td>
+              <td><input type="number" v-model="form.cargo.volume" step="0.01"></td>
+              <td><input type="text" v-model="form.cargo.transportType"></td>
+              <td><input type="text" v-model="form.cargo.equipment"></td>
             </tr>
           </tbody>
         </table>
@@ -112,15 +100,15 @@
             <tr>
               <td style="width: 50%">
                 <label>Особые условия и требования:</label>
-                <textarea v-model="form.specialConditions" rows="3" :readonly="mode === 'readonly'"></textarea>
+                <textarea v-model="form.specialConditions" rows="3"></textarea>
               </td>
               <td style="width: 25%">
                 <label>Тип загрузки:</label>
-                <input type="text" v-model="form.loadingType" :readonly="mode === 'readonly'">
+                <input type="text" v-model="form.loadingType">
               </td>
               <td style="width: 25%">
                 <label>Тип выгрузки:</label>
-                <input type="text" v-model="form.unloadingType" :readonly="mode === 'readonly'">
+                <input type="text" v-model="form.unloadingType">
               </td>
             </tr>
           </table>
@@ -131,11 +119,11 @@
           <tr>
             <td style="width: 50%">
               <label>Согласованная цена за перевозку:</label>
-              <input type="text" v-model="form.agreedPrice" :readonly="mode === 'readonly'">
+              <input type="text" v-model="form.agreedPrice">
             </td>
             <td style="width: 50%">
               <label>Условия и форма оплаты:</label>
-              <input type="text" v-model="form.paymentTerms" :readonly="mode === 'readonly'">
+              <input type="text" v-model="form.paymentTerms">
             </td>
           </tr>
         </table>
@@ -145,15 +133,15 @@
           <tr>
             <td style="width: 33%">
               <label>ФИО водителя и телефон:</label>
-              <input type="text" v-model="form.driver.name" :readonly="mode === 'readonly'">
+              <input type="text" v-model="form.driver.name">
             </td>
             <td style="width: 33%">
               <label>Паспортные данные:</label>
-              <input type="text" v-model="form.driver.passport" :readonly="mode === 'readonly'">
+              <input type="text" v-model="form.driver.passport">
             </td>
             <td style="width: 34%">
               <label>Транспортное средство:</label>
-              <input type="text" v-model="form.driver.vehicle" :readonly="mode === 'readonly'">
+              <input type="text" v-model="form.driver.vehicle">
             </td>
           </tr>
         </table>
@@ -163,7 +151,20 @@
           <h3>Условия перевозки:</h3>
           <div class="terms-content">
             <p>Условия выполнения заказа определяются положениями законодательства РФ, Уставом автотранспорта и условиями настоящего Договора-заявки.</p>
-            <!-- остальные условия -->
+            <p>Стороны договорились, что принятая по факсу или по электронной почте договор-заявка, подтвержденная печатями и подписями ответственных лиц, имеет юридическую силу. Заявка считается подтверждённой, если в течении 6 часов с момента получения заявки перевозчик её не отменил.</p>
+            <p>Нормативное время на загрузку/выгрузку, (таможенное оформление) - 48 часа. Сверхнормативный простой оплачивается согласно тарифу – 10 000,00 руб (или 100,00 EUR) в сутки при наличии документов, подтверждающих сверхнормативное время ("простойный лист")</p>
+            <p>Срыв загрузки менее чем за 48 часов по вине Перевозчика оплачивается в размере 100% от стоимости перевозки.</p>
+            <p>При отсутствии генерального договора, данный договор-заявка имеет силу генерального договора на разовую перевозку и действительна копия с факсимильными печатями.</p>
+            <p>Перевозчик несёт ответственность за груз с момента принятия груза к перевозке до момента сдачи груза грузополучателю (утрата, недостача, порча груза), на основании TIR и CMR конвенции и правил грузовых перевозок, в размере стоимости утраченного, недостающего или испорченного груза, указанного в транспортной накладной и иных товарно-сопроводительных документах.</p>
+            <p>Предоставленный автотранспорт должен быть в технически исправном состоянии с необходимым оборудованием и документами. Перевозчик обязан иметь CMR страховку (если это предусмотрено условиями перевозки).</p>
+            <p>Водитель должен своевременно не позднее 09 00 утра информировать о процессах погрузки/выгрузки</p>
+            
+            <h4>Дополнительные условия:</h4>
+            <p>Обе стороны не несут ответственности при форс-мажорных обстоятельствах и незаконных действиях государственных органов.</p>
+            <p>Если груз не доставлен в означенное место выгрузки в установленные сроки, штраф 100% от стоимости груза.</p>
+            <p>В случае неявки на загрузку, или явке на технически не исправном автомобиле или не соответствующем запрошенным параметрам - штраф 50% от стоимости перевозки. Если а/м опаздывает на загрузку, выгрузку, таможню - штраф 20% от стоимости перевозки за каждый день опоздания.</p>
+            <p>Мы работаем на основании Закона РФ о грузовых перевозках, на основании правил о международных грузовых перевозках, а также, в рамках TIR и CMR-конвенции.</p>
+            <p>Без дополнительного заключенного (подписанного) письменного договора, перевозчик не может вести прямые переговоры с клиентами. (Грузоотправителями, грузополучателями или другими экспедиторами), или принимать от них прямые заказы. В случае нарушения данного пункта - штраф 500000,00 руб.</p>
           </div>
         </div>
 
@@ -178,9 +179,7 @@
             <tr>
               <td>
                 <label>От исполнителя:</label>
-                <textarea v-model="form.executorDetails" rows="6" 
-                         :readonly="mode === 'readonly'" 
-                         placeholder="Введите реквизиты исполнителя"></textarea>
+                <textarea v-model="form.executorDetails" rows="6" placeholder="Введите реквизиты исполнителя"></textarea>
               </td>
               <td>
                 <div class="customer-requisites">
@@ -197,6 +196,13 @@
             </tr>
           </table>
         </div>
+
+        <!-- Кнопки действий -->
+        <div class="actions">
+          <button @click="saveForm" class="btn btn-primary">Сохранить заявку</button>
+          <button @click="printForm" class="btn btn-secondary">Печать</button>
+          <button @click="resetForm" class="btn btn-outline">Сбросить</button>
+        </div>
       </div>
     </div>
   </div>
@@ -204,22 +210,7 @@
 
 <script>
 export default {
-  name: 'TransportApplicationForm',
-  props: {
-    formData: {
-      type: Object,
-      default: () => ({})
-    },
-    mode: {
-      type: String,
-      default: 'editable', // 'editable' or 'readonly'
-      validator: (value) => ['editable', 'readonly'].includes(value)
-    },
-    documentMode: {
-      type: Boolean,
-      default: false
-    }
-  },
+  name: 'TransportApplication',
   data() {
     return {
       form: {
@@ -255,19 +246,11 @@ export default {
       }
     }
   },
-  watch: {
-    formData: {
-      immediate: true,
-      handler(newData) {
-        if (newData && Object.keys(newData).length > 0) {
-          this.form = { ...this.form, ...newData };
-        }
-      }
-    }
-  },
   methods: {
     saveForm() {
-      this.$emit('save', this.form);
+      console.log('Сохранение формы:', this.form);
+      // Здесь можно добавить логику сохранения данных
+      alert('Заявка сохранена!');
     },
     printForm() {
       window.print();
@@ -306,48 +289,24 @@ export default {
           executorDetails: ''
         };
       }
-    },
-    getFormData() {
-      return { ...this.form };
     }
-  },
-  emits: ['save', 'update']
+  }
 }
 </script>
 
 <style scoped>
-.transport-application-form {
+.transport-application {
   font-family: 'Arial', sans-serif;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
   background: white;
 }
 
-.transport-application-form.document-mode {
-  max-width: none;
-  padding: 0;
-}
-
-.form-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  padding: 20px;
-  background: #f8f9fa;
-  border-radius: 8px;
-}
-
-.form-header h2 {
-  margin: 0;
-  color: #333;
-}
-
-.form-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.document-content {
-  padding: 20px;
+.document {
+  border: 1px solid #ccc;
+  padding: 30px;
+  background: white;
 }
 
 .header {
@@ -357,10 +316,9 @@ export default {
   padding-bottom: 20px;
 }
 
-.header h3 {
+.header h2 {
   margin: 0 0 10px 0;
   color: #333;
-  font-size: 16px;
 }
 
 .addresses {
@@ -385,7 +343,6 @@ export default {
   margin-bottom: 20px;
   padding: 10px;
   background: #f5f5f5;
-  border-radius: 4px;
 }
 
 table {
@@ -411,20 +368,11 @@ input, textarea {
   border: 1px solid #ddd;
   border-radius: 4px;
   box-sizing: border-box;
-  font-family: inherit;
-  font-size: inherit;
 }
 
-input:read-only, textarea:readonly {
+input[readonly] {
   background-color: #f8f9fa;
   color: #666;
-  cursor: not-allowed;
-}
-
-input:disabled {
-  background-color: #f8f9fa;
-  color: #999;
-  cursor: not-allowed;
 }
 
 .terms-section, .requisites-section {
@@ -432,13 +380,11 @@ input:disabled {
   padding: 20px;
   border: 1px solid #ddd;
   border-radius: 4px;
-  background: #fafafa;
 }
 
 .terms-content p {
   margin-bottom: 10px;
   line-height: 1.5;
-  font-size: 14px;
 }
 
 .customer-requisites {
@@ -446,13 +392,18 @@ input:disabled {
   line-height: 1.4;
 }
 
+.actions {
+  margin-top: 30px;
+  text-align: center;
+}
+
 .btn {
   padding: 10px 20px;
+  margin: 0 10px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
-  transition: all 0.3s ease;
 }
 
 .btn-primary {
@@ -471,34 +422,18 @@ input:disabled {
   color: #6c757d;
 }
 
-.btn:hover:not(:disabled) {
+.btn:hover {
   opacity: 0.8;
-  transform: translateY(-1px);
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
 }
 
 @media print {
-  .form-header,
-  .form-actions,
-  .btn {
+  .actions {
     display: none;
   }
   
-  .document-content {
-    padding: 0;
-  }
-  
-  input:read-only, 
-  textarea:readonly,
-  input:disabled {
-    background: none;
+  .document {
     border: none;
-    color: #000;
+    padding: 0;
   }
 }
 
@@ -519,24 +454,5 @@ label {
   display: block;
   margin-bottom: 5px;
   font-size: 12px;
-  color: #555;
-}
-
-.document-mode .header h3 {
-  font-size: 14px;
-}
-
-.document-mode .main-form h1 {
-  font-size: 16px;
-}
-
-.document-mode table {
-  font-size: 12px;
-}
-
-.document-mode input,
-.document-mode textarea {
-  font-size: 12px;
-  padding: 6px;
 }
 </style>

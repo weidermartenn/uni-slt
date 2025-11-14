@@ -407,7 +407,7 @@
               </div>
             </div>
 
-            <!-- Неоплаченные договоры -->
+            <!-- Неоплаченные счета -->
             <div v-if="
               currentMonthStats.unpaidBills &&
               currentMonthStats.unpaidBills.length > 0
@@ -415,7 +415,7 @@
               <div class="flex items-center justify-between mb-4">
                 <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                   <UIcon name="i-lucide-file-warning" class="h-5 w-5 text-red-600 dark:text-red-400" />
-                  Неоплаченные договора
+                  Неоплаченные счета
                   <UBadge color="error" variant="subtle" class="ml-2">
                     {{ getUniqueBills(currentMonthStats.unpaidBills).length }}
                   </UBadge>
@@ -453,7 +453,7 @@
                             }}
                           </UBadge>
                           <UButton color="neutral" variant="ghost" icon="i-lucide-copy" size="xs" class="p-1"
-                            @click="copyToClipboard(bill, 'Договор скопирован')" />
+                            @click="copyToClipboard(bill, 'Счет скопирован')" />
                         </div>
                       </div>
                     </div>
@@ -508,7 +508,7 @@ const userData = ref<any>(null);
 const editMode = ref(false);
 const currentMonthIndex = ref(0);
 const showSalaryInput = ref(false);
-const issueSalary = ref(0);
+const issueSalary = ref("");
 
 // форма расширена
 const form = reactive({
@@ -587,9 +587,9 @@ const nextMonth = () => {
     currentMonthIndex.value++;
 };
 
-// Методы для работы с договорами
+// Методы для работы со счетами
 const formatBillTitle = (bill: string) => {
-  if (!bill) return "Неизвестный договор";
+  if (!bill) return "Неизвестный счет";
 
   // Пытаемся извлечь номер договора
   const numberMatch = bill.match(/№(\d+)/);
@@ -601,7 +601,7 @@ const formatBillTitle = (bill: string) => {
     ? orgMatch[1].trim()
     : "Неизвестная организация";
 
-  return `Договор №${number} - ${organization}`;
+  return `Счет №${number} - ${organization}`;
 };
 
 const getUniqueBills = (bills: string[]) => {
@@ -670,11 +670,17 @@ const paySalary = async () => {
 
     const employeeId = userData.value?.object?.employee?.id;
 
-    await employeeStore.issueSalary({
+    console.log({
       employeeId: employeeId,
       percent: true,
-      salary: issueSalary.value
+      salary: parseFloat(issueSalary.value)
     })
+
+    // await employeeStore.issueSalary({
+    //   employeeId: employeeId,
+    //   percent: true,
+    //   salary: issueSalary.value
+    // })
 
     toast.add({
       title: "Зарплата выдана",
