@@ -1,6 +1,6 @@
 <template>
     <UApp>
-      <div class="min-h-screen mb-10 dark:bg-gray-900 dark:text-gray-100">
+      <div class="min-h-screen mb-10 py-4 dark:bg-gray-900 dark:text-gray-100">
         <div class="max-w-4xl mx-auto px-4">
           <!-- Загрузка -->
           <div v-if="loading" class="flex items-center justify-center h-64">

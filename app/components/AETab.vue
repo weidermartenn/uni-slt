@@ -31,9 +31,9 @@
       </div>
     </div>
 
-    <div class="w-full flex justify-end">
+    <!-- <div class="w-full flex justify-end">
       <AddEmployeeModal />
-    </div>
+    </div> -->
 
     <!-- Скелетоны -->
     <div v-if="loading" class="flex flex-col gap-4">
@@ -56,7 +56,7 @@
     </div>
 
     <!-- Вертикальный список карточек -->
-    <div v-else ref="listContainer" class="flex flex-col gap-4">
+    <div v-else ref="listContainer" class="flex flex-col gap-4 mb-12">
       <div
         v-for="u in filteredEmployees"
         :key="u.id"
@@ -64,14 +64,14 @@
         :aria-label="`Карточка сотрудника ${displayName(u)}`"
         tabindex="0"
       >
-        <UCard class="group border border-gray-200 hover:border-blue-200 hover:shadow-md transition-all duration-300">
+        <UCard class="group border border-gray-200 hover:border-blue-200 dark:hover:border-grey-600 dark:bg-gray-800 dark:border-gray-700 hover:shadow-md transition-all duration-300">
           <div class="flex items-start justify-between">
             <div class="flex items-center gap-4">
               <div class="h-14 w-14 rounded-full flex items-center justify-center bg-gray-50 group-hover:bg-white shadow-sm">
                 <UIcon name="i-lucide-user" class="h-7 w-7 text-gray-700" />
               </div>
               <div>
-                <h3 class="text-lg font-semibold text-gray-900">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-zinc-100">
                   {{ displayName(u) }}
                 </h3>
                 <div class="flex items-center gap-2 mt-1">
@@ -121,14 +121,14 @@
           <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-building" class="h-4 w-4 text-blue-600" />
-              <span class="text-sm text-gray-700">
+              <span class="text-sm text-gray-700 dark:text-gray-400">
                 {{ u.employee?.department || 'Не указан' }}
               </span>
             </div>
 
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-phone" class="h-4 w-4 text-blue-600" />
-              <span class="text-sm text-gray-700">
+              <span class="text-sm text-gray-700 dark:text-gray-400">
                 {{ formatPhone(u.phone) || 'Не указан' }}
               </span>
               <UButton
@@ -145,14 +145,14 @@
 
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-mail" class="h-4 w-4 text-green-600" />
-              <span class="text-sm text-gray-700">
+              <span class="text-sm text-gray-700 dark:text-gray-400">
                 {{ u.email || 'Не указан' }}
               </span>
             </div>
 
             <div v-if="u.employee" class="flex items-center gap-2">
               <UIcon name="i-lucide-wallet" class="h-4 w-4 text-amber-600" />
-              <span class="text-sm text-gray-700">
+              <span class="text-sm text-gray-700 dark:text-gray-400">
                 {{ formatCurrency(u.employee?.salary || 0) }} руб.
               </span>
             </div>
@@ -247,7 +247,7 @@ const deleting = ref(false)
 
 // Данные из стора
 const employees = computed<User[]>(() =>
-  (aeiStore.employeesAllInfo || []).filter((emp: any) => (emp?.fullName != null || emp?.name != null))
+  (aeiStore.employeesAllInfo || []).filter((emp: any) => (emp?.fullName != null || emp?.name != null) && emp?.confirmed === true)
 )
 
 // Опции ролей

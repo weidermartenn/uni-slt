@@ -1,6 +1,6 @@
 <template>
   <UApp>
-    <div class="min-h-screen mb-10 dark:bg-gray-900 dark:text-gray-100">
+    <div class="min-h-screen mb-10  dark:text-gray-100">
       <div class="max-w-4xl mx-auto px-4">
         <!-- Загрузка -->
         <div v-if="loading" class="flex items-center justify-center h-64">
@@ -14,7 +14,7 @@
         </div>
 
         <!-- Основной контент -->
-        <div v-else-if="userData?.operationResult === 'OK'" class="space-y-6" ref="contentGroup">
+        <div v-else-if="userData?.operationResult === 'OK'" class="space-y-6 py-4" ref="contentGroup">
           <UButton icon="i-lucide-arrow-left" variant="ghost" color="neutral" @click="$router.back()">
             Вернуться
           </UButton>
@@ -407,7 +407,7 @@
               </div>
             </div>
 
-            <!-- Неоплаченные счета -->
+            <!-- Неоплаченные договоры -->
             <div v-if="
               currentMonthStats.unpaidBills &&
               currentMonthStats.unpaidBills.length > 0
@@ -415,7 +415,7 @@
               <div class="flex items-center justify-between mb-4">
                 <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                   <UIcon name="i-lucide-file-warning" class="h-5 w-5 text-red-600 dark:text-red-400" />
-                  Неоплаченные счета
+                  Неоплаченные договора
                   <UBadge color="error" variant="subtle" class="ml-2">
                     {{ getUniqueBills(currentMonthStats.unpaidBills).length }}
                   </UBadge>
@@ -453,7 +453,7 @@
                             }}
                           </UBadge>
                           <UButton color="neutral" variant="ghost" icon="i-lucide-copy" size="xs" class="p-1"
-                            @click="copyToClipboard(bill, 'Счет скопирован')" />
+                            @click="copyToClipboard(bill, 'Договор скопирован')" />
                         </div>
                       </div>
                     </div>
@@ -508,7 +508,7 @@ const userData = ref<any>(null);
 const editMode = ref(false);
 const currentMonthIndex = ref(0);
 const showSalaryInput = ref(false);
-const issueSalary = ref("");
+const issueSalary = ref(0);
 
 // форма расширена
 const form = reactive({
@@ -587,9 +587,9 @@ const nextMonth = () => {
     currentMonthIndex.value++;
 };
 
-// Методы для работы со счетами
+// Методы для работы с договорами
 const formatBillTitle = (bill: string) => {
-  if (!bill) return "Неизвестный счет";
+  if (!bill) return "Неизвестный договор";
 
   // Пытаемся извлечь номер договора
   const numberMatch = bill.match(/№(\d+)/);
@@ -601,7 +601,7 @@ const formatBillTitle = (bill: string) => {
     ? orgMatch[1].trim()
     : "Неизвестная организация";
 
-  return `Счет №${number} - ${organization}`;
+  return `Договор №${number} - ${organization}`;
 };
 
 const getUniqueBills = (bills: string[]) => {
@@ -670,17 +670,11 @@ const paySalary = async () => {
 
     const employeeId = userData.value?.object?.employee?.id;
 
-    console.log({
+    await employeeStore.issueSalary({
       employeeId: employeeId,
       percent: true,
-      salary: parseFloat(issueSalary.value)
+      salary: issueSalary.value
     })
-
-    // await employeeStore.issueSalary({
-    //   employeeId: employeeId,
-    //   percent: true,
-    //   salary: issueSalary.value
-    // })
 
     toast.add({
       title: "Зарплата выдана",
