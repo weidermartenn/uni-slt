@@ -112,6 +112,47 @@ const loadState = reactive({
   startTime: 0
 })
 
+const route = useRoute() 
+const searchBill = ref(route.query.searchBill as string);
+const searchColumn = ref((route.query.searchColumn as string) || 'K')
+
+const searchAndScrollToBill = async (api: FUniver) => {
+  if (!searchBill.value) return;
+
+  try {
+    const decodedBill = decodeURIComponent(searchBill.value)
+    const workbook = api.getActiveWorkbook()
+    const sheet = workbook?.getActiveSheet()
+
+    if (!sheet) return;
+
+    const range = sheet.getRange('A1:AB1000')
+    const values = range.getValues()
+
+    const columnIndex = columnLetterToIndex(searchColumn.value)
+
+    for (let row = 0; row < values.length; row++) {
+      const cellValue = values[row]?.[columnIndex]?.v;
+      
+      if (cellValue && cellValue.toString().includes(decodedBill)) {
+        // Нашли совпадение - скроллим к ячейке
+        const cellAddress = `${searchColumn.value}${row + 1}`;
+        const cellRange = sheet.getRange(cellAddress);
+        
+        // Активируем ячейку и скроллим к ней
+        cellRange.activate();
+        
+        break;
+      }
+    }
+  } catch { }
+}
+
+// Функция преобразования буквы колонки в индекс
+const columnLetterToIndex = (letter: string): number => {
+  return letter.toUpperCase().charCodeAt(0) - 65; // A=0, B=1, ..., Z=25
+};
+
 const deleteState = reactive({
   pending: false,
   rows: [] as number[],

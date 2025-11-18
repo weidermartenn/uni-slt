@@ -433,7 +433,8 @@
                   <div v-for="(bill, index) in getUniqueBills(
                     currentMonthStats.unpaidBills
                   )" :key="index"
-                    class="flex-shrink-0 w-80 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm hover:shadow-md transition-all duration-300 p-4">
+                    class="flex-shrink-0 w-80 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm hover:shadow-md transition-all duration-300 p-4"
+                    @click="goToSheetWithBill(bill)">
                     <div class="flex items-start gap-3">
                       <div class="flex-shrink-0">
                         <UIcon name="i-lucide-file-text" class="h-6 w-6 text-red-500 dark:text-red-400 mt-1" />
@@ -603,6 +604,18 @@ const formatBillTitle = (bill: string) => {
 
   return `Договор №${number} - ${organization}`;
 };
+
+const goToSheetWithBill = (bill: string) => {
+  const billNum = bill.split('№')[1]?.substring(0, 3);
+
+  router.push({
+    path: '/sheet',
+    query: {
+      searchBill: billNum,
+      searchColumn: 'K'
+    }
+  })
+}
 
 const getUniqueBills = (bills: string[]) => {
   return [...new Set(bills)];

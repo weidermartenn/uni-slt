@@ -55,7 +55,7 @@ export const useSheetStore = defineStore("sheet", {
         const headers = import.meta.server ? useRequestHeaders(["cookie"]) : undefined;
         const currentUser = getUser();
         let path = "";
-        if (currentUser?.roleCode === "ROLE_ADMIN" || currentUser?.roleCode === "ROLE_BUH") {
+        if (currentUser?.roleCode === "ROLE_ADMIN") {
           path = `${kingsApiBase}/workTable/transportAccounting/admin`;
         } else {
           path = `${kingsApiBase}/workTable/transportAccounting/user`;
