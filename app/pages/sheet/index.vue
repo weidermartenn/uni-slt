@@ -458,6 +458,12 @@ onMounted(async () => {
             setTimeout(() => {
               range?.removeThemeStyle(currentTheme)
             }, 500)
+          } else {
+            toast.add({
+              title: 'Номер счета не найден',
+              color: 'error',
+              icon: 'i-lucide-alert-triangle'
+            })
           }
         })
       }
