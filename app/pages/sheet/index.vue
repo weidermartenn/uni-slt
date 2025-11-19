@@ -7,6 +7,15 @@
           <p class="text-sm font-medium text-zinc-900 dark:text-zinc-100">Удаление данных</p>
         </div>
         <UButton
+          v-if="hasSearchBill"
+          color="info"
+          variant="soft"
+          icon="i-lucide-arrow-left"
+          @click="resetToOriginalTable"
+        >
+          Вернуться к исходной таблице
+        </UButton>
+        <UButton
           :color="deleteState.pending ? 'error' : 'primary'"
           :variant="deleteState.pending ? 'solid' : 'soft'"
           icon="i-lucide-trash-2"
@@ -103,6 +112,7 @@ const loading = ref(true)
 const error = ref(false)
 const hasRecords = ref(false)
 const loadProgress = ref(0)
+const hasSearchBill = computed(() => !!route.query.searchBill)
 
 const loadState = reactive({
   currentChunk: 0, 
@@ -113,45 +123,54 @@ const loadState = reactive({
 })
 
 const route = useRoute() 
-const searchBill = ref(route.query.searchBill as string);
-const searchColumn = ref((route.query.searchColumn as string) || 'K')
 
-const searchAndScrollToBill = async (api: FUniver) => {
-  if (!searchBill.value) return;
+const searchBillByValues = async (bill: string) => {
+  if (!api.value) return 
 
   try {
-    const decodedBill = decodeURIComponent(searchBill.value)
-    const workbook = api.getActiveWorkbook()
-    const sheet = workbook?.getActiveSheet()
+    const wb = api.value.getActiveWorkbook() 
+    if (!wb) return 
 
-    if (!sheet) return;
+    const sheets = wb.getSheets()
 
-    const range = sheet.getRange('A1:AB1000')
-    const values = range.getValues()
+    for (const sheet of sheets) {
+      const sheetName = sheet.getSheetName()
 
-    const columnIndex = columnLetterToIndex(searchColumn.value)
+      wb.setActiveSheet(sheet.getSheetId())
+      await new Promise(r => setTimeout(r, 100))
 
-    for (let row = 0; row < values.length; row++) {
-      const cellValue = values[row]?.[columnIndex]?.v;
-      
-      if (cellValue && cellValue.toString().includes(decodedBill)) {
-        // Нашли совпадение - скроллим к ячейке
-        const cellAddress = `${searchColumn.value}${row + 1}`;
-        const cellRange = sheet.getRange(cellAddress);
-        
-        // Активируем ячейку и скроллим к ней
-        cellRange.activate();
-        
-        break;
-      }
+      const searchRange = sheet.getRange('K1:K3000')
+
+      try {
+        const values = searchRange.getValues() 
+        for (let r = 0; r < values.length; r++) {
+          const cellValue = values[r][0];
+
+          if (cellValue && cellValue.toString().trim() === bill.toString()) {
+            const cellAddress = `K${r + 1}`;
+            const foundCell = sheet.getRange(cellAddress)
+            const row = foundCell.getRow()
+            const column = foundCell.getColumn()
+            sheet.scrollToCell(row - 5, column - 5)
+            foundCell.activate()
+
+            return {
+              sheet: sheet,
+              cell: foundCell,
+              sheetName: sheetName,
+              address: cellAddress,
+              row: r + 1
+            }
+          }
+        }
+      } catch { }
     }
   } catch { }
 }
 
-// Функция преобразования буквы колонки в индекс
-const columnLetterToIndex = (letter: string): number => {
-  return letter.toUpperCase().charCodeAt(0) - 65; // A=0, B=1, ..., Z=25
-};
+const resetToOriginalTable = () => {
+  navigateTo('/sheet')
+}
 
 const deleteState = reactive({
   pending: false,
@@ -411,6 +430,37 @@ onMounted(async () => {
 
       const { rendered } = getLifeCycleState(api.value!)
       const fontsReady = ref(false)
+
+      const bill = route.query.searchBill
+
+      if (bill) {
+        setTimeout(async () => {
+          if (!api.value) return
+
+          let result = await searchBillByValues(bill.toString())
+          
+          if (result) {
+            toast.add({
+              title: 'Номер счета найден',
+              description: `Счет найден по адресу: ${result.address}`,
+              color: 'success',
+              icon: 'i-lucide-check'
+            })
+
+            const wb = api.value.getActiveWorkbook()
+            const ws = wb?.getActiveSheet()
+            const themes = wb?.getRegisteredRangeThemes()
+
+            const range = ws?.getRange(result.address)
+            range?.useThemeStyle('light-green')
+
+            const currentTheme = range?.getUsedThemeStyle() as string
+            setTimeout(() => {
+              range?.removeThemeStyle(currentTheme)
+            }, 500)
+          }
+        })
+      }
 
       if (typeof document !== 'undefined' && 'fonts' in document) {
         ;(document as any).fonts.ready.then(() => {

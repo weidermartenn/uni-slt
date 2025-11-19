@@ -433,7 +433,7 @@
                   <div v-for="(bill, index) in getUniqueBills(
                     currentMonthStats.unpaidBills
                   )" :key="index"
-                    class="flex-shrink-0 w-80 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm hover:shadow-md transition-all duration-300 p-4"
+                    class="flex-shrink-0 w-80 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm hover:shadow-md transition-all duration-300 p-4 cursor-pointer"
                     @click="goToSheetWithBill(bill)">
                     <div class="flex items-start gap-3">
                       <div class="flex-shrink-0">
@@ -612,7 +612,6 @@ const goToSheetWithBill = (bill: string) => {
     path: '/sheet',
     query: {
       searchBill: billNum,
-      searchColumn: 'K'
     }
   })
 }
